@@ -1,0 +1,842 @@
+import streamlit as st
+import pandas as pd
+from snowflake.snowpark.context import get_active_session
+
+session = get_active_session()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def run_query(sql):
+    return session.sql(sql).to_pandas()
+
+
+def format_bytes(value):
+    value = float(value or 0)
+
+    if value >= 1024 ** 3:
+        return f"{value / (1024 ** 3):,.2f} GB"
+
+    if value >= 1024 ** 2:
+        return f"{value / (1024 ** 2):,.1f} MB"
+
+    if value >= 1024:
+        return f"{value / 1024:,.1f} KB"
+
+    return f"{value:,.0f} B"
+
+
+def format_runtime(ms):
+    value = float(ms or 0)
+
+    if value >= 60000:
+        return f"{value / 60000:,.1f} min"
+
+    if value >= 1000:
+        return f"{value / 1000:,.1f} sec"
+
+    return f"{value:,.0f} ms"
+
+
+# ============================================================
+# PAGE STYLE
+# ============================================================
+
+st.html("""
+<style>
+
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+/* HERO */
+
+.qa-hero {
+    background: linear-gradient(
+        135deg,
+        #101828 0%,
+        #173B7A 48%,
+        #175CD3 100%
+    );
+
+    border-radius: 18px;
+    padding: 34px 36px;
+    margin-bottom: 22px;
+
+    box-shadow:
+        0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+.qa-label {
+    color: #53B1FD;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.qa-title {
+    color: #FFFFFF;
+    font-size: 2.15rem;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    margin-bottom: 8px;
+}
+
+.qa-description {
+    color: #D1E9FF;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    max-width: 900px;
+}
+
+/* KPI */
+
+.qa-kpi {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 18px 20px;
+    min-height: 105px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.04);
+}
+
+.qa-kpi-label {
+    color: #667085;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+}
+
+.qa-kpi-value {
+    color: #101828;
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+}
+
+/* SECTIONS */
+
+.qa-section-title {
+    color: #101828;
+    font-size: 1.25rem;
+    font-weight: 750;
+    margin-top: 28px;
+    margin-bottom: 4px;
+}
+
+.qa-section-description {
+    color: #667085;
+    font-size: 0.82rem;
+    margin-bottom: 14px;
+}
+
+/* CARDS */
+
+.qa-card {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 20px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.035);
+}
+
+/* QUERY DETAIL */
+
+.query-box {
+    background: #F8FAFC;
+    border: 1px solid #EAECF0;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+.query-id {
+    color: #175CD3;
+    font-size: 0.78rem;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.query-text {
+    color: #344054;
+    font-family: monospace;
+    font-size: 0.78rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
+/* SIGNAL */
+
+.signal {
+    background: #F8FAFC;
+    border: 1px solid #EAECF0;
+    border-radius: 10px;
+    padding: 12px 14px;
+}
+
+.signal-title {
+    color: #101828;
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.signal-value {
+    color: #667085;
+    font-size: 0.72rem;
+    margin-top: 3px;
+}
+
+</style>
+""")
+
+
+# ============================================================
+# LOAD REAL QUERY TELEMETRY
+# ============================================================
+
+query_df = run_query("""
+SELECT
+    QUERY_ID,
+    QUERY_TEXT,
+    WAREHOUSE_NAME,
+    QUERY_TYPE,
+    EXECUTION_STATUS,
+    START_TIME,
+    TOTAL_ELAPSED_TIME,
+    EXECUTION_TIME,
+    COMPILATION_TIME,
+    QUEUED_PROVISIONING_TIME,
+    QUEUED_OVERLOAD_TIME,
+    TRANSACTION_BLOCKED_TIME,
+    BYTES_SCANNED,
+    PERCENTAGE_SCANNED_FROM_CACHE,
+    PARTITIONS_SCANNED,
+    PARTITIONS_TOTAL,
+    BYTES_SPILLED_TO_LOCAL_STORAGE,
+    BYTES_SPILLED_TO_REMOTE_STORAGE,
+    ROWS_PRODUCED,
+    QUERY_PARAMETERIZED_HASH
+FROM SNOWFLAKE_FINOPS.RAW.QUERY_HISTORY_RAW
+WHERE START_TIME IS NOT NULL
+ORDER BY START_TIME DESC
+LIMIT 1000
+""")
+
+
+# ============================================================
+# CLEAN DATA
+# ============================================================
+
+if not query_df.empty:
+
+    query_df["START_TIME"] = pd.to_datetime(
+        query_df["START_TIME"],
+        errors="coerce"
+    )
+
+    numeric_columns = [
+        "TOTAL_ELAPSED_TIME",
+        "EXECUTION_TIME",
+        "COMPILATION_TIME",
+        "QUEUED_PROVISIONING_TIME",
+        "QUEUED_OVERLOAD_TIME",
+        "TRANSACTION_BLOCKED_TIME",
+        "BYTES_SCANNED",
+        "PERCENTAGE_SCANNED_FROM_CACHE",
+        "PARTITIONS_SCANNED",
+        "PARTITIONS_TOTAL",
+        "BYTES_SPILLED_TO_LOCAL_STORAGE",
+        "BYTES_SPILLED_TO_REMOTE_STORAGE",
+        "ROWS_PRODUCED",
+    ]
+
+    for col in numeric_columns:
+        query_df[col] = pd.to_numeric(
+            query_df[col],
+            errors="coerce"
+        ).fillna(0)
+
+    query_df["PARTITION_SCAN_PCT"] = 0.0
+
+    valid_partition_rows = (
+        query_df["PARTITIONS_TOTAL"] > 0
+    )
+
+    query_df.loc[
+        valid_partition_rows,
+        "PARTITION_SCAN_PCT"
+    ] = (
+        query_df.loc[
+            valid_partition_rows,
+            "PARTITIONS_SCANNED"
+        ]
+        /
+        query_df.loc[
+            valid_partition_rows,
+            "PARTITIONS_TOTAL"
+        ]
+        * 100
+    )
+
+    query_df["TOTAL_SPILL_BYTES"] = (
+        query_df["BYTES_SPILLED_TO_LOCAL_STORAGE"]
+        +
+        query_df["BYTES_SPILLED_TO_REMOTE_STORAGE"]
+    )
+
+    query_df["STATUS"] = (
+        query_df["EXECUTION_STATUS"]
+        .astype(str)
+        .str.upper()
+    )
+
+
+# ============================================================
+# KPI VALUES
+# ============================================================
+
+total_queries = len(query_df)
+
+failed_queries = (
+    int(
+        query_df["STATUS"]
+        .isin(["FAIL", "FAILED"])
+        .sum()
+    )
+    if not query_df.empty
+    else 0
+)
+
+slow_queries = (
+    int(
+        (
+            query_df["TOTAL_ELAPSED_TIME"] >= 10000
+        ).sum()
+    )
+    if not query_df.empty
+    else 0
+)
+
+remote_spill_queries = (
+    int(
+        (
+            query_df["BYTES_SPILLED_TO_REMOTE_STORAGE"] > 0
+        ).sum()
+    )
+    if not query_df.empty
+    else 0
+)
+
+
+# ============================================================
+# HERO
+# ============================================================
+
+st.html("""
+<div class="qa-hero">
+
+    <div class="qa-label">
+        WORKLOAD INTELLIGENCE
+    </div>
+
+    <div class="qa-title">
+        Query Analysis
+    </div>
+
+    <div class="qa-description">
+        Investigate expensive, slow and inefficient workloads
+        using real Snowflake query telemetry.
+    </div>
+
+</div>
+""")
+
+
+# ============================================================
+# KPI ROW
+# ============================================================
+
+k1, k2, k3, k4 = st.columns(4)
+
+with k1:
+    st.html(f"""
+    <div class="qa-kpi">
+        <div class="qa-kpi-label">QUERIES ANALYZED</div>
+        <div class="qa-kpi-value">{total_queries:,}</div>
+    </div>
+    """)
+
+with k2:
+    st.html(f"""
+    <div class="qa-kpi">
+        <div class="qa-kpi-label">FAILED QUERIES</div>
+        <div class="qa-kpi-value">{failed_queries:,}</div>
+    </div>
+    """)
+
+with k3:
+    st.html(f"""
+    <div class="qa-kpi">
+        <div class="qa-kpi-label">SLOW QUERIES</div>
+        <div class="qa-kpi-value">{slow_queries:,}</div>
+    </div>
+    """)
+
+with k4:
+    st.html(f"""
+    <div class="qa-kpi">
+        <div class="qa-kpi-label">REMOTE SPILL</div>
+        <div class="qa-kpi-value">{remote_spill_queries:,}</div>
+    </div>
+    """)
+
+
+# ============================================================
+# FILTERS
+# ============================================================
+
+st.html("""
+<div class="qa-section-title">
+    Investigation Filters
+</div>
+
+<div class="qa-section-description">
+    Narrow the workload to the behavior you want to investigate.
+</div>
+""")
+
+
+f1, f2, f3 = st.columns(3)
+
+
+with f1:
+
+    warehouses = ["All"]
+
+    if not query_df.empty:
+
+        warehouse_values = (
+            query_df["WAREHOUSE_NAME"]
+            .dropna()
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        warehouses += sorted(warehouse_values)
+
+    selected_warehouse = st.selectbox(
+        "Warehouse",
+        warehouses
+    )
+
+
+with f2:
+
+    statuses = [
+        "All",
+        "SUCCESS",
+        "FAIL"
+    ]
+
+    selected_status = st.selectbox(
+        "Execution Status",
+        statuses
+    )
+
+
+with f3:
+
+    analysis_modes = [
+        "Most Expensive",
+        "Slowest Queries",
+        "Remote Spill",
+        "Poor Partition Pruning",
+        "Low Cache Usage",
+        "Failed Queries",
+        "Most Frequent Patterns"
+    ]
+
+    selected_analysis = st.selectbox(
+        "Analysis",
+        analysis_modes
+    )
+
+
+# ============================================================
+# APPLY FILTERS
+# ============================================================
+
+filtered = query_df.copy()
+
+
+if selected_warehouse != "All":
+
+    filtered = filtered[
+        filtered["WAREHOUSE_NAME"]
+        .astype(str)
+        == selected_warehouse
+    ]
+
+
+if selected_status != "All":
+
+    filtered = filtered[
+        filtered["STATUS"]
+        == selected_status
+    ]
+
+
+# ============================================================
+# ANALYSIS MODE
+# ============================================================
+
+if selected_analysis == "Most Expensive":
+
+    filtered = filtered.sort_values(
+        "BYTES_SCANNED",
+        ascending=False
+    )
+
+elif selected_analysis == "Slowest Queries":
+
+    filtered = filtered.sort_values(
+        "TOTAL_ELAPSED_TIME",
+        ascending=False
+    )
+
+elif selected_analysis == "Remote Spill":
+
+    filtered = filtered[
+        filtered["BYTES_SPILLED_TO_REMOTE_STORAGE"] > 0
+    ].sort_values(
+        "BYTES_SPILLED_TO_REMOTE_STORAGE",
+        ascending=False
+    )
+
+elif selected_analysis == "Poor Partition Pruning":
+
+    filtered = filtered[
+        filtered["PARTITION_SCAN_PCT"] > 50
+    ].sort_values(
+        "PARTITION_SCAN_PCT",
+        ascending=False
+    )
+
+elif selected_analysis == "Low Cache Usage":
+
+    filtered = filtered[
+        filtered["PERCENTAGE_SCANNED_FROM_CACHE"] < 20
+    ].sort_values(
+        "PERCENTAGE_SCANNED_FROM_CACHE",
+        ascending=True
+    )
+
+elif selected_analysis == "Failed Queries":
+
+    filtered = filtered[
+        filtered["STATUS"].isin(
+            ["FAIL", "FAILED"]
+        )
+    ].sort_values(
+        "START_TIME",
+        ascending=False
+    )
+
+elif selected_analysis == "Most Frequent Patterns":
+
+    pattern_counts = (
+        filtered
+        .groupby(
+            "QUERY_PARAMETERIZED_HASH",
+            dropna=False
+        )
+        .size()
+        .reset_index(name="EXECUTION_COUNT")
+        .sort_values(
+            "EXECUTION_COUNT",
+            ascending=False
+        )
+        .head(25)
+    )
+
+    st.html("""
+    <div class="qa-section-title">
+        Repeated Query Patterns
+    </div>
+
+    <div class="qa-section-description">
+        Parameterized query patterns with the highest execution frequency.
+    </div>
+    """)
+
+    if pattern_counts.empty:
+
+        st.info(
+            "No repeated query patterns were found."
+        )
+
+    else:
+
+        st.dataframe(
+            pattern_counts,
+            width="stretch",
+            hide_index=True
+        )
+
+    filtered = filtered.sort_values(
+        "START_TIME",
+        ascending=False
+    )
+
+
+# ============================================================
+# QUERY TABLE
+# ============================================================
+
+st.html("""
+<div class="qa-section-title">
+    Query Investigation
+</div>
+
+<div class="qa-section-description">
+    Select a query from the table to inspect its execution behavior.
+</div>
+""")
+
+
+if filtered.empty:
+
+    st.info(
+        "No queries match the selected investigation filters."
+    )
+
+else:
+
+    display_df = filtered.head(100).copy()
+
+    display_df["Runtime"] = (
+        display_df["TOTAL_ELAPSED_TIME"]
+        .map(format_runtime)
+    )
+
+    display_df["Scanned"] = (
+        display_df["BYTES_SCANNED"]
+        .map(format_bytes)
+    )
+
+    display_df["Cache %"] = (
+        display_df["PERCENTAGE_SCANNED_FROM_CACHE"]
+        .map(lambda x: f"{float(x):.1f}%")
+    )
+
+    display_df["Partition Scan %"] = (
+        display_df["PARTITION_SCAN_PCT"]
+        .map(lambda x: f"{float(x):.1f}%")
+    )
+
+    display_df["Local Spill"] = (
+        display_df["BYTES_SPILLED_TO_LOCAL_STORAGE"]
+        .map(format_bytes)
+    )
+
+    display_df["Remote Spill"] = (
+        display_df["BYTES_SPILLED_TO_REMOTE_STORAGE"]
+        .map(format_bytes)
+    )
+
+    display_df["Started"] = (
+        display_df["START_TIME"]
+        .dt.strftime("%d %b %Y %H:%M:%S")
+    )
+
+    table_df = display_df[
+        [
+            "QUERY_ID",
+            "WAREHOUSE_NAME",
+            "STATUS",
+            "Runtime",
+            "Scanned",
+            "Cache %",
+            "Partition Scan %",
+            "Local Spill",
+            "Remote Spill",
+            "Started"
+        ]
+    ].copy()
+
+    table_df.columns = [
+        "Query ID",
+        "Warehouse",
+        "Status",
+        "Runtime",
+        "Scanned",
+        "Cache %",
+        "Partition Scan %",
+        "Local Spill",
+        "Remote Spill",
+        "Started"
+    ]
+
+    st.dataframe(
+        table_df,
+        width="stretch",
+        hide_index=True,
+        height=430
+    )
+
+
+# ============================================================
+# QUERY DETAIL
+# ============================================================
+
+st.html("""
+<div class="qa-section-title">
+    Query Detail
+</div>
+
+<div class="qa-section-description">
+    Inspect the execution profile and SQL text for a selected query.
+</div>
+""")
+
+
+if not filtered.empty:
+
+    query_options = filtered[
+        "QUERY_ID"
+    ].dropna().astype(str).tolist()
+
+    if query_options:
+
+        selected_query_id = st.selectbox(
+            "Select Query",
+            query_options,
+            key="query_detail_selector"
+        )
+
+        selected = filtered[
+            filtered["QUERY_ID"].astype(str)
+            == selected_query_id
+        ]
+
+        if not selected.empty:
+
+            row = selected.iloc[0]
+
+            st.html(f"""
+            <div class="query-box">
+
+                <div class="query-id">
+                    QUERY ID • {row["QUERY_ID"]}
+                </div>
+
+                <div class="query-text">
+                    {str(row["QUERY_TEXT"] or "SQL text unavailable")}
+                </div>
+
+            </div>
+            """)
+
+            st.markdown("")
+
+            d1, d2, d3, d4 = st.columns(4)
+
+            with d1:
+                st.metric(
+                    "Runtime",
+                    format_runtime(
+                        row["TOTAL_ELAPSED_TIME"]
+                    )
+                )
+
+            with d2:
+                st.metric(
+                    "Data Scanned",
+                    format_bytes(
+                        row["BYTES_SCANNED"]
+                    )
+                )
+
+            with d3:
+                st.metric(
+                    "Cache Usage",
+                    f'{float(row["PERCENTAGE_SCANNED_FROM_CACHE"]):.1f}%'
+                )
+
+            with d4:
+                st.metric(
+                    "Partition Scan",
+                    f'{float(row["PARTITION_SCAN_PCT"]):.1f}%'
+                )
+
+            st.markdown("")
+
+            s1, s2, s3 = st.columns(3)
+
+            with s1:
+
+                st.html(f"""
+                <div class="signal">
+                    <div class="signal-title">
+                        Execution Status
+                    </div>
+
+                    <div class="signal-value">
+                        {row["STATUS"]}
+                    </div>
+                </div>
+                """)
+
+            with s2:
+
+                st.html(f"""
+                <div class="signal">
+                    <div class="signal-title">
+                        Warehouse
+                    </div>
+
+                    <div class="signal-value">
+                        {row["WAREHOUSE_NAME"]}
+                    </div>
+                </div>
+                """)
+
+            with s3:
+
+                st.html(f"""
+                <div class="signal">
+                    <div class="signal-title">
+                        Remote Spill
+                    </div>
+
+                    <div class="signal-value">
+                        {format_bytes(row["BYTES_SPILLED_TO_REMOTE_STORAGE"])}
+                    </div>
+                </div>
+                """)
+
+else:
+
+    st.info(
+        "Select a query to inspect its details."
+    )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.caption(
+    "Snowflake FinOps Control Center • "
+    "Query analysis is based on available Snowflake query telemetry."
+)
