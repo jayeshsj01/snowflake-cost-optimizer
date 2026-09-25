@@ -1,0 +1,839 @@
+import streamlit as st
+import pandas as pd
+from snowflake.snowpark.context import get_active_session
+
+session = get_active_session()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def run_query(sql):
+    return session.sql(sql).to_pandas()
+
+
+def money(value):
+    value = float(value or 0)
+    return f"${value:,.2f}"
+
+
+def pct(value):
+    value = float(value or 0)
+    return f"{value:.0f}%"
+
+
+# ============================================================
+# PAGE STYLE
+# ============================================================
+
+st.html("""
+<style>
+
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+/* HERO */
+
+.rec-hero {
+    background: linear-gradient(
+        135deg,
+        #101828 0%,
+        #173B7A 48%,
+        #175CD3 100%
+    );
+
+    border-radius: 18px;
+    padding: 34px 36px;
+    margin-bottom: 22px;
+
+    box-shadow:
+        0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+.rec-label {
+    color: #53B1FD;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.rec-title {
+    color: #FFFFFF;
+    font-size: 2.15rem;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    margin-bottom: 8px;
+}
+
+.rec-description {
+    color: #D1E9FF;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    max-width: 900px;
+}
+
+
+/* KPI */
+
+.rec-kpi {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 18px 20px;
+    min-height: 105px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.04);
+}
+
+.rec-kpi-label {
+    color: #667085;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+}
+
+.rec-kpi-value {
+    color: #101828;
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+}
+
+
+/* SECTION */
+
+.rec-section-title {
+    color: #101828;
+    font-size: 1.25rem;
+    font-weight: 750;
+    margin-top: 28px;
+    margin-bottom: 4px;
+}
+
+.rec-section-description {
+    color: #667085;
+    font-size: 0.82rem;
+    margin-bottom: 14px;
+}
+
+
+/* OPPORTUNITY */
+
+.opportunity-card {
+    background: #F8FAFC;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 18px 20px;
+    margin-top: 10px;
+}
+
+.opportunity-label {
+    color: #667085;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.opportunity-value {
+    color: #101828;
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin-top: 5px;
+}
+
+
+/* DETAIL */
+
+.detail-card {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 22px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.035);
+}
+
+.detail-label {
+    color: #667085;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 5px;
+}
+
+.detail-value {
+    color: #101828;
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+
+/* STATUS */
+
+.status-card {
+    background: #F8FAFC;
+    border: 1px solid #EAECF0;
+    border-radius: 10px;
+    padding: 12px 14px;
+}
+
+.status-title {
+    color: #101828;
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
+.status-value {
+    color: #667085;
+    font-size: 0.72rem;
+    margin-top: 3px;
+}
+
+</style>
+""")
+
+
+# ============================================================
+# LOAD RECOMMENDATIONS
+# ============================================================
+
+df = run_query("""
+SELECT
+    RECOMMENDATION_ID,
+    RULE_ID,
+    RULE_NAME,
+    OBJECT_TYPE,
+    OBJECT_NAME,
+    RECOMMENDATION,
+    EVIDENCE,
+    ESTIMATED_SAVINGS_USD,
+    CONFIDENCE_SCORE,
+    PRIORITY_SCORE,
+    SEVERITY,
+    RISK_LEVEL,
+    CREATED_AT
+FROM SNOWFLAKE_FINOPS.RECOMMENDATIONS.OPTIMIZATION_RECOMMENDATIONS_CLEAN
+ORDER BY
+    PRIORITY_SCORE DESC,
+    ESTIMATED_SAVINGS_USD DESC,
+    CREATED_AT DESC
+""")
+
+
+# ============================================================
+# CLEAN DATA
+# ============================================================
+
+if not df.empty:
+
+    numeric_columns = [
+        "ESTIMATED_SAVINGS_USD",
+        "CONFIDENCE_SCORE",
+        "PRIORITY_SCORE"
+    ]
+
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        ).fillna(0)
+
+    df["SEVERITY"] = (
+        df["SEVERITY"]
+        .fillna("UNKNOWN")
+        .astype(str)
+        .str.upper()
+    )
+
+    df["RISK_LEVEL"] = (
+        df["RISK_LEVEL"]
+        .fillna("UNKNOWN")
+        .astype(str)
+        .str.upper()
+    )
+
+    df["RULE_NAME"] = (
+        df["RULE_NAME"]
+        .fillna("UNKNOWN")
+        .astype(str)
+    )
+
+    df["OBJECT_NAME"] = (
+        df["OBJECT_NAME"]
+        .fillna("—")
+        .astype(str)
+    )
+
+
+# ============================================================
+# KPI VALUES
+# ============================================================
+
+recommendation_count = len(df)
+
+estimated_savings = (
+    float(df["ESTIMATED_SAVINGS_USD"].sum())
+    if not df.empty
+    else 0
+)
+
+average_confidence = (
+    float(df["CONFIDENCE_SCORE"].mean())
+    if not df.empty
+    else 0
+)
+
+high_priority = (
+    int(
+        (
+            df["PRIORITY_SCORE"] >= 80
+        ).sum()
+    )
+    if not df.empty
+    else 0
+)
+
+
+# ============================================================
+# HERO
+# ============================================================
+
+st.html("""
+<div class="rec-hero">
+
+    <div class="rec-label">
+        FINOPS DECISION ENGINE
+    </div>
+
+    <div class="rec-title">
+        Optimization Recommendations
+    </div>
+
+    <div class="rec-description">
+        Evidence-backed actions generated from Snowflake workload,
+        warehouse and query telemetry.
+    </div>
+
+</div>
+""")
+
+
+# ============================================================
+# KPI ROW
+# ============================================================
+
+k1, k2, k3, k4 = st.columns(4)
+
+with k1:
+    st.html(f"""
+    <div class="rec-kpi">
+        <div class="rec-kpi-label">
+            RECOMMENDATIONS
+        </div>
+        <div class="rec-kpi-value">
+            {recommendation_count:,}
+        </div>
+    </div>
+    """)
+
+with k2:
+    st.html(f"""
+    <div class="rec-kpi">
+        <div class="rec-kpi-label">
+            EST. MONTHLY SAVINGS
+        </div>
+        <div class="rec-kpi-value">
+            {money(estimated_savings)}
+        </div>
+    </div>
+    """)
+
+with k3:
+    st.html(f"""
+    <div class="rec-kpi">
+        <div class="rec-kpi-label">
+            AVG. CONFIDENCE
+        </div>
+        <div class="rec-kpi-value">
+            {pct(average_confidence)}
+        </div>
+    </div>
+    """)
+
+with k4:
+    st.html(f"""
+    <div class="rec-kpi">
+        <div class="rec-kpi-label">
+            HIGH PRIORITY
+        </div>
+        <div class="rec-kpi-value">
+            {high_priority:,}
+        </div>
+    </div>
+    """)
+
+
+# ============================================================
+# OPPORTUNITY SUMMARY
+# ============================================================
+
+st.html("""
+<div class="rec-section-title">
+    Optimization Opportunity
+</div>
+
+<div class="rec-section-description">
+    A compact view of where the recommendation engine is finding
+    optimization signals.
+</div>
+""")
+
+
+if not df.empty:
+
+    rule_summary = (
+        df.groupby("RULE_NAME", as_index=False)
+        .agg(
+            Recommendations=("RECOMMENDATION_ID", "count"),
+            Estimated_Savings=("ESTIMATED_SAVINGS_USD", "sum"),
+            Avg_Confidence=("CONFIDENCE_SCORE", "mean")
+        )
+        .sort_values(
+            "Estimated_Savings",
+            ascending=False
+        )
+    )
+
+    rule_summary["Estimated_Savings"] = (
+        rule_summary["Estimated_Savings"]
+        .map(money)
+    )
+
+    rule_summary["Avg_Confidence"] = (
+        rule_summary["Avg_Confidence"]
+        .map(pct)
+    )
+
+    st.dataframe(
+        rule_summary,
+        width="stretch",
+        hide_index=True
+    )
+
+else:
+
+    st.info(
+        "No optimization recommendations are currently available."
+    )
+
+
+# ============================================================
+# FILTERS
+# ============================================================
+
+st.html("""
+<div class="rec-section-title">
+    Recommendation Queue
+</div>
+
+<div class="rec-section-description">
+    Filter the queue to focus on the recommendations that need
+    investigation first.
+</div>
+""")
+
+
+f1, f2, f3, f4 = st.columns(4)
+
+
+with f1:
+
+    rule_options = ["All"]
+
+    if not df.empty:
+        rule_options += sorted(
+            df["RULE_NAME"]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+    selected_rule = st.selectbox(
+        "Rule",
+        rule_options
+    )
+
+
+with f2:
+
+    severity_options = ["All"]
+
+    if not df.empty:
+        severity_options += sorted(
+            df["SEVERITY"]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+    selected_severity = st.selectbox(
+        "Severity",
+        severity_options
+    )
+
+
+with f3:
+
+    risk_options = ["All"]
+
+    if not df.empty:
+        risk_options += sorted(
+            df["RISK_LEVEL"]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+    selected_risk = st.selectbox(
+        "Risk",
+        risk_options
+    )
+
+
+with f4:
+
+    sort_options = [
+        "Priority",
+        "Estimated Savings",
+        "Confidence",
+        "Newest"
+    ]
+
+    selected_sort = st.selectbox(
+        "Sort By",
+        sort_options
+    )
+
+
+# ============================================================
+# APPLY FILTERS
+# ============================================================
+
+filtered = df.copy()
+
+
+if selected_rule != "All":
+
+    filtered = filtered[
+        filtered["RULE_NAME"]
+        == selected_rule
+    ]
+
+
+if selected_severity != "All":
+
+    filtered = filtered[
+        filtered["SEVERITY"]
+        == selected_severity
+    ]
+
+
+if selected_risk != "All":
+
+    filtered = filtered[
+        filtered["RISK_LEVEL"]
+        == selected_risk
+    ]
+
+
+if selected_sort == "Priority":
+
+    filtered = filtered.sort_values(
+        "PRIORITY_SCORE",
+        ascending=False
+    )
+
+elif selected_sort == "Estimated Savings":
+
+    filtered = filtered.sort_values(
+        "ESTIMATED_SAVINGS_USD",
+        ascending=False
+    )
+
+elif selected_sort == "Confidence":
+
+    filtered = filtered.sort_values(
+        "CONFIDENCE_SCORE",
+        ascending=False
+    )
+
+elif selected_sort == "Newest":
+
+    filtered = filtered.sort_values(
+        "CREATED_AT",
+        ascending=False
+    )
+
+
+# ============================================================
+# RECOMMENDATION TABLE
+# ============================================================
+
+if filtered.empty:
+
+    st.info(
+        "No recommendations match the selected filters."
+    )
+
+else:
+
+    display = filtered.head(100).copy()
+
+    display["Estimated Savings"] = (
+        display["ESTIMATED_SAVINGS_USD"]
+        .map(money)
+    )
+
+    display["Confidence"] = (
+        display["CONFIDENCE_SCORE"]
+        .map(pct)
+    )
+
+    display["Priority"] = (
+        display["PRIORITY_SCORE"]
+        .map(lambda x: f"{float(x):.0f}/100")
+    )
+
+    queue_df = display[
+        [
+            "RULE_NAME",
+            "OBJECT_NAME",
+            "Estimated Savings",
+            "Confidence",
+            "Priority",
+            "SEVERITY",
+            "RISK_LEVEL"
+        ]
+    ].copy()
+
+    queue_df.columns = [
+        "Optimization Rule",
+        "Object",
+        "Est. Savings",
+        "Confidence",
+        "Priority",
+        "Severity",
+        "Risk"
+    ]
+
+    st.dataframe(
+        queue_df,
+        width="stretch",
+        hide_index=True,
+        height=430
+    )
+
+
+# ============================================================
+# RECOMMENDATION DETAIL
+# ============================================================
+
+st.html("""
+<div class="rec-section-title">
+    Recommendation Detail
+</div>
+
+<div class="rec-section-description">
+    Every recommendation is backed by evidence and an estimated
+    savings model. Estimated savings are not realized savings.
+</div>
+""")
+
+
+if not filtered.empty:
+
+    recommendation_ids = (
+        filtered["RECOMMENDATION_ID"]
+        .astype(str)
+        .tolist()
+    )
+
+    selected_id = st.selectbox(
+        "Select Recommendation",
+        recommendation_ids,
+        key="recommendation_detail"
+    )
+
+    selected = filtered[
+        filtered["RECOMMENDATION_ID"].astype(str)
+        == selected_id
+    ]
+
+    if not selected.empty:
+
+        row = selected.iloc[0]
+
+        st.html(f"""
+        <div class="detail-card">
+
+            <div class="detail-label">
+                OPTIMIZATION RULE
+            </div>
+
+            <div class="detail-value">
+                {row["RULE_NAME"]}
+            </div>
+
+            <br>
+
+            <div class="detail-label">
+                OBJECT
+            </div>
+
+            <div class="detail-value">
+                {row["OBJECT_NAME"]}
+            </div>
+
+            <br>
+
+            <div class="detail-label">
+                RECOMMENDATION
+            </div>
+
+            <div class="detail-value">
+                {row["RECOMMENDATION"]}
+            </div>
+
+            <br>
+
+            <div class="detail-label">
+                EVIDENCE
+            </div>
+
+            <div class="detail-value">
+                {row["EVIDENCE"]}
+            </div>
+
+        </div>
+        """)
+
+        st.markdown("")
+
+        d1, d2, d3, d4 = st.columns(4)
+
+        with d1:
+            st.metric(
+                "Estimated Savings",
+                money(row["ESTIMATED_SAVINGS_USD"])
+            )
+
+        with d2:
+            st.metric(
+                "Confidence",
+                pct(row["CONFIDENCE_SCORE"])
+            )
+
+        with d3:
+            st.metric(
+                "Priority",
+                f'{float(row["PRIORITY_SCORE"]):.0f}/100'
+            )
+
+        with d4:
+            st.metric(
+                "Risk",
+                str(row["RISK_LEVEL"])
+            )
+
+        st.markdown("")
+
+        s1, s2, s3 = st.columns(3)
+
+        with s1:
+            st.html(f"""
+            <div class="status-card">
+                <div class="status-title">
+                    SEVERITY
+                </div>
+                <div class="status-value">
+                    {row["SEVERITY"]}
+                </div>
+            </div>
+            """)
+
+        with s2:
+            st.html(f"""
+            <div class="status-card">
+                <div class="status-title">
+                    OBJECT TYPE
+                </div>
+                <div class="status-value">
+                    {row["OBJECT_TYPE"]}
+                </div>
+            </div>
+            """)
+
+        with s3:
+            st.html(f"""
+            <div class="status-card">
+                <div class="status-title">
+                    RULE ID
+                </div>
+                <div class="status-value">
+                    {row["RULE_ID"]}
+                </div>
+            </div>
+            """)
+
+
+# ============================================================
+# ENGINE NOTE
+# ============================================================
+
+st.html("""
+<div class="rec-section-title">
+    Recommendation Engine Notes
+</div>
+
+<div class="rec-section-description">
+    Recommendations combine telemetry evidence, configurable
+    optimization rules, confidence, risk and estimated savings.
+</div>
+""")
+
+note1, note2, note3 = st.columns(3)
+
+with note1:
+    st.info(
+        "Evidence comes from Snowflake usage telemetry."
+    )
+
+with note2:
+    st.info(
+        "Savings are modeled estimates until validated."
+    )
+
+with note3:
+    st.info(
+        "Priority combines savings, confidence, severity and risk."
+    )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.caption(
+    "Snowflake FinOps Control Center • "
+    "Recommendation engine output"
+)
