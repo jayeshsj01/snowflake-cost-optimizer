@@ -1,0 +1,140 @@
+-- 5. QUERY COST ATTRIBUTION
+-- =========================================================
+-- Uses RAW QUERY_HISTORY_RAW directly.
+-- This avoids dependency on uncertain CORE column names.
+
+
+CREATE OR REPLACE TABLE
+SNOWFLAKE_FINOPS.ANALYTICS.QUERY_COMPUTE_ATTRIBUTION
+AS
+
+WITH QUERY_DATA AS
+(
+    SELECT
+
+        QUERY_ID,
+
+        WAREHOUSE_NAME,
+
+        CAST(START_TIME AS DATE)
+            AS USAGE_DATE,
+
+        TOTAL_ELAPSED_TIME
+
+    FROM
+        SNOWFLAKE_FINOPS.RAW.QUERY_HISTORY_RAW
+
+    WHERE
+        WAREHOUSE_NAME IS NOT NULL
+
+        AND TOTAL_ELAPSED_TIME > 0
+),
+
+DAILY_QUERY_TIME AS
+(
+    SELECT
+
+        WAREHOUSE_NAME,
+
+        USAGE_DATE,
+
+        SUM(TOTAL_ELAPSED_TIME)
+            AS DAILY_QUERY_ELAPSED_TIME
+
+    FROM
+        QUERY_DATA
+
+    GROUP BY
+
+        WAREHOUSE_NAME,
+        USAGE_DATE
+),
+
+DAILY_WAREHOUSE_CREDITS AS
+(
+    SELECT
+
+        WAREHOUSE_NAME,
+
+        CAST(START_TIME AS DATE)
+            AS USAGE_DATE,
+
+        SUM(CREDITS_USED)
+            AS DAILY_CREDITS
+
+    FROM
+        SNOWFLAKE_FINOPS.RAW.WAREHOUSE_METERING_RAW
+
+    GROUP BY
+
+        WAREHOUSE_NAME,
+        CAST(START_TIME AS DATE)
+)
+
+SELECT
+
+    Q.QUERY_ID,
+
+    Q.WAREHOUSE_NAME,
+
+    Q.USAGE_DATE,
+
+    Q.TOTAL_ELAPSED_TIME,
+
+    COALESCE(
+        DQT.DAILY_QUERY_ELAPSED_TIME,
+        0
+    ) AS DAILY_QUERY_ELAPSED_TIME,
+
+    COALESCE(
+        DWC.DAILY_CREDITS,
+        0
+    ) AS DAILY_WAREHOUSE_CREDITS,
+
+    CASE
+
+        WHEN DQT.DAILY_QUERY_ELAPSED_TIME > 0
+
+        THEN
+
+            COALESCE(
+                DWC.DAILY_CREDITS,
+                0
+            )
+
+            *
+
+            (
+                Q.TOTAL_ELAPSED_TIME
+                /
+                DQT.DAILY_QUERY_ELAPSED_TIME
+            )
+
+        ELSE
+            0
+
+    END AS ATTRIBUTED_CREDITS
+
+FROM
+    QUERY_DATA Q
+
+LEFT JOIN
+    DAILY_QUERY_TIME DQT
+
+ON
+    Q.WAREHOUSE_NAME = DQT.WAREHOUSE_NAME
+
+    AND
+    Q.USAGE_DATE = DQT.USAGE_DATE
+
+LEFT JOIN
+    DAILY_WAREHOUSE_CREDITS DWC
+
+ON
+    Q.WAREHOUSE_NAME = DWC.WAREHOUSE_NAME
+
+    AND
+    Q.USAGE_DATE = DWC.USAGE_DATE;
+
+
+-- =========================================================
