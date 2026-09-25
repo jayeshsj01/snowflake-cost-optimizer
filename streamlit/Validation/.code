@@ -1,0 +1,901 @@
+import streamlit as st
+import pandas as pd
+from snowflake.snowpark.context import get_active_session
+
+session = get_active_session()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def run_query(sql):
+    return session.sql(sql).to_pandas()
+
+
+def money(value):
+    value = float(value or 0)
+    return f"${value:,.2f}"
+
+
+def credits(value):
+    value = float(value or 0)
+    return f"{value:,.4f}"
+
+
+def percent(value):
+    value = float(value or 0)
+    return f"{value:.1f}%"
+
+
+# ============================================================
+# PAGE STYLE
+# ============================================================
+
+st.html("""
+<style>
+
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+
+/* ============================================================
+   HERO
+   ============================================================ */
+
+.validation-hero {
+    background: linear-gradient(
+        135deg,
+        #101828 0%,
+        #173B7A 48%,
+        #175CD3 100%
+    );
+
+    border-radius: 18px;
+    padding: 34px 36px;
+    margin-bottom: 22px;
+
+    box-shadow:
+        0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+.validation-label {
+    color: #53B1FD;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.validation-title {
+    color: #FFFFFF;
+    font-size: 2.15rem;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    margin-bottom: 8px;
+}
+
+.validation-description {
+    color: #D1E9FF;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    max-width: 900px;
+}
+
+
+/* ============================================================
+   KPI CARDS
+   ============================================================ */
+
+.validation-kpi {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 18px 20px;
+    min-height: 105px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.04);
+}
+
+.validation-kpi-label {
+    color: #667085;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+}
+
+.validation-kpi-value {
+    color: #101828;
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+}
+
+
+/* ============================================================
+   SECTION
+   ============================================================ */
+
+.validation-section-title {
+    color: #101828;
+    font-size: 1.25rem;
+    font-weight: 750;
+    margin-top: 30px;
+    margin-bottom: 4px;
+}
+
+.validation-section-description {
+    color: #667085;
+    font-size: 0.82rem;
+    margin-bottom: 14px;
+}
+
+
+/* ============================================================
+   STATUS
+   ============================================================ */
+
+.validation-status {
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin: 14px 0 20px 0;
+
+    font-size: 0.88rem;
+    line-height: 1.55;
+}
+
+.status-blue {
+    background: #EFF8FF;
+    border: 1px solid #B2DDFF;
+    color: #175CD3;
+}
+
+.status-green {
+    background: #ECFDF3;
+    border: 1px solid #ABEFC6;
+    color: #027A48;
+}
+
+.status-amber {
+    background: #FFFAEB;
+    border: 1px solid #FEDF89;
+    color: #B54708;
+}
+
+
+/* ============================================================
+   METHOD CARDS
+   ============================================================ */
+
+.method-card {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 20px;
+
+    min-height: 150px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.035);
+}
+
+.method-number {
+    color: #175CD3;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+}
+
+.method-title {
+    color: #101828;
+    font-size: 0.95rem;
+    font-weight: 750;
+    margin-bottom: 6px;
+}
+
+.method-text {
+    color: #667085;
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+
+/* ============================================================
+   RESULT CARD
+   ============================================================ */
+
+.result-card {
+    background: #F8FAFC;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 20px;
+    margin-top: 12px;
+}
+
+.result-label {
+    color: #667085;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+}
+
+.result-value {
+    color: #101828;
+    font-size: 1.3rem;
+    font-weight: 800;
+}
+
+.result-text {
+    color: #667085;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    margin-top: 5px;
+}
+
+
+/* ============================================================
+   FOOTER NOTE
+   ============================================================ */
+
+.validation-note {
+    color: #667085;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    margin-top: 25px;
+}
+
+</style>
+""")
+
+
+# ============================================================
+# LOAD VALIDATION DATA
+# ============================================================
+
+try:
+
+    validation_df = run_query("""
+        SELECT *
+        FROM SNOWFLAKE_FINOPS.AUDIT.OPTIMIZATION_VALIDATION
+        ORDER BY 1 DESC
+    """)
+
+except Exception:
+
+    validation_df = pd.DataFrame()
+
+
+# ============================================================
+# FIND COLUMNS DYNAMICALLY
+# ============================================================
+
+def find_column(dataframe, candidates):
+
+    if dataframe.empty:
+        return None
+
+    columns = {
+        str(col).upper(): col
+        for col in dataframe.columns
+    }
+
+    for candidate in candidates:
+
+        if candidate.upper() in columns:
+            return columns[candidate.upper()]
+
+    return None
+
+
+status_col = find_column(
+    validation_df,
+    [
+        "VALIDATION_STATUS",
+        "STATUS",
+        "RESULT",
+        "OUTCOME"
+    ]
+)
+
+before_credits_col = find_column(
+    validation_df,
+    [
+        "BEFORE_CREDITS",
+        "BASELINE_CREDITS",
+        "BEFORE_COMPUTE_CREDITS"
+    ]
+)
+
+after_credits_col = find_column(
+    validation_df,
+    [
+        "AFTER_CREDITS",
+        "CURRENT_CREDITS",
+        "AFTER_COMPUTE_CREDITS"
+    ]
+)
+
+realized_savings_col = find_column(
+    validation_df,
+    [
+        "REALIZED_SAVINGS_USD",
+        "REALIZED_SAVINGS",
+        "ACTUAL_SAVINGS_USD"
+    ]
+)
+
+performance_col = find_column(
+    validation_df,
+    [
+        "PERFORMANCE_IMPACT",
+        "PERFORMANCE_CHANGE",
+        "RUNTIME_CHANGE"
+    ]
+)
+
+
+# ============================================================
+# CALCULATE SUMMARY
+# ============================================================
+
+validated_count = len(validation_df)
+
+successful_count = 0
+partial_count = 0
+realized_savings = 0.0
+
+if not validation_df.empty:
+
+    if status_col:
+
+        statuses = (
+            validation_df[status_col]
+            .fillna("")
+            .astype(str)
+            .str.upper()
+        )
+
+        successful_count = int(
+            statuses.isin(
+                [
+                    "SUCCESS",
+                    "SUCCESSFUL",
+                    "VERIFIED",
+                    "PASS",
+                    "PASSED"
+                ]
+            ).sum()
+        )
+
+        partial_count = int(
+            statuses.isin(
+                [
+                    "PARTIAL",
+                    "PARTIALLY_VALIDATED"
+                ]
+            ).sum()
+        )
+
+    if realized_savings_col:
+
+        realized_savings = float(
+            pd.to_numeric(
+                validation_df[realized_savings_col],
+                errors="coerce"
+            )
+            .fillna(0)
+            .sum()
+        )
+
+
+# ============================================================
+# HERO
+# ============================================================
+
+st.html("""
+<div class="validation-hero">
+
+    <div class="validation-label">
+        FINOPS GOVERNANCE
+    </div>
+
+    <div class="validation-title">
+        Optimization Validation
+    </div>
+
+    <div class="validation-description">
+        Measure whether implemented recommendations actually
+        changed Snowflake cost or workload performance.
+    </div>
+
+</div>
+""")
+
+
+# ============================================================
+# KPI ROW
+# ============================================================
+
+k1, k2, k3, k4 = st.columns(4)
+
+with k1:
+    st.html(f"""
+    <div class="validation-kpi">
+        <div class="validation-kpi-label">
+            VALIDATED
+        </div>
+
+        <div class="validation-kpi-value">
+            {validated_count:,}
+        </div>
+    </div>
+    """)
+
+
+with k2:
+    st.html(f"""
+    <div class="validation-kpi">
+        <div class="validation-kpi-label">
+            SUCCESSFUL
+        </div>
+
+        <div class="validation-kpi-value">
+            {successful_count:,}
+        </div>
+    </div>
+    """)
+
+
+with k3:
+    st.html(f"""
+    <div class="validation-kpi">
+        <div class="validation-kpi-label">
+            PARTIAL
+        </div>
+
+        <div class="validation-kpi-value">
+            {partial_count:,}
+        </div>
+    </div>
+    """)
+
+
+with k4:
+    st.html(f"""
+    <div class="validation-kpi">
+        <div class="validation-kpi-label">
+            REALIZED SAVINGS
+        </div>
+
+        <div class="validation-kpi-value">
+            {money(realized_savings)}
+        </div>
+    </div>
+    """)
+
+
+# ============================================================
+# CURRENT VALIDATION STATUS
+# ============================================================
+
+if validation_df.empty:
+
+    st.html("""
+    <div class="validation-status status-blue">
+
+        <strong>Validation is currently waiting for implementation.</strong>
+
+        <br><br>
+
+        The recommendation engine has produced optimization
+        opportunities, but no recommendation has yet been
+        validated against post-implementation Snowflake telemetry.
+
+        <br><br>
+
+        This is intentional: the system does not convert estimated
+        savings into realized savings without actual before/after
+        evidence.
+
+    </div>
+    """)
+
+elif validated_count > 0 and successful_count == validated_count:
+
+    st.html("""
+    <div class="validation-status status-green">
+
+        <strong>Validated optimization results are available.</strong>
+
+        <br>
+
+        The available validation records show successful
+        post-implementation results.
+
+    </div>
+    """)
+
+else:
+
+    st.html("""
+    <div class="validation-status status-amber">
+
+        <strong>Validation results require review.</strong>
+
+        <br>
+
+        Some recommendations have validation records, but not all
+        available results are marked successful.
+
+    </div>
+    """)
+
+
+# ============================================================
+# BEFORE / AFTER
+# ============================================================
+
+st.html("""
+<div class="validation-section-title">
+    Before / After Results
+</div>
+
+<div class="validation-section-description">
+    Compare the baseline captured before an optimization with
+    telemetry collected after the change.
+</div>
+""")
+
+
+if not validation_df.empty:
+
+    display_df = validation_df.copy()
+
+    rename_map = {}
+
+    if status_col:
+        rename_map[status_col] = "Status"
+
+    if before_credits_col:
+        rename_map[before_credits_col] = "Before Credits"
+
+    if after_credits_col:
+        rename_map[after_credits_col] = "After Credits"
+
+    if realized_savings_col:
+        rename_map[realized_savings_col] = "Realized Savings"
+
+    if performance_col:
+        rename_map[performance_col] = "Performance Impact"
+
+    display_df = display_df.rename(
+        columns=rename_map
+    )
+
+    # Format numerical validation fields.
+    if "Before Credits" in display_df.columns:
+
+        display_df["Before Credits"] = (
+            pd.to_numeric(
+                display_df["Before Credits"],
+                errors="coerce"
+            )
+            .map(
+                lambda x:
+                credits(x)
+                if pd.notna(x)
+                else "—"
+            )
+        )
+
+    if "After Credits" in display_df.columns:
+
+        display_df["After Credits"] = (
+            pd.to_numeric(
+                display_df["After Credits"],
+                errors="coerce"
+            )
+            .map(
+                lambda x:
+                credits(x)
+                if pd.notna(x)
+                else "—"
+            )
+        )
+
+    if "Realized Savings" in display_df.columns:
+
+        display_df["Realized Savings"] = (
+            pd.to_numeric(
+                display_df["Realized Savings"],
+                errors="coerce"
+            )
+            .map(
+                lambda x:
+                money(x)
+                if pd.notna(x)
+                else "—"
+            )
+        )
+
+    st.dataframe(
+        display_df,
+        width="stretch",
+        hide_index=True,
+        height=360
+    )
+
+else:
+
+    st.info(
+        "No before/after validation records are available yet."
+    )
+
+
+# ============================================================
+# VALIDATION WORKFLOW
+# ============================================================
+
+st.html("""
+<div class="validation-section-title">
+    Validation Workflow
+</div>
+
+<div class="validation-section-description">
+    Every optimization should move through these stages before
+    its savings are treated as realized.
+</div>
+""")
+
+
+m1, m2, m3, m4 = st.columns(4)
+
+
+with m1:
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-number">
+            STEP 01
+        </div>
+
+        <div class="method-title">
+            Capture Baseline
+        </div>
+
+        <div class="method-text">
+            Record the relevant cost, credit, runtime or workload
+            metric before implementing the recommendation.
+        </div>
+
+    </div>
+    """)
+
+
+with m2:
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-number">
+            STEP 02
+        </div>
+
+        <div class="method-title">
+            Implement
+        </div>
+
+        <div class="method-text">
+            Apply the recommended optimization such as warehouse
+            sizing, workload tuning or query improvement.
+        </div>
+
+    </div>
+    """)
+
+
+with m3:
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-number">
+            STEP 03
+        </div>
+
+        <div class="method-title">
+            Measure Again
+        </div>
+
+        <div class="method-text">
+            Collect fresh Snowflake telemetry after the change
+            using the same measurement logic.
+        </div>
+
+    </div>
+    """)
+
+
+with m4:
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-number">
+            STEP 04
+        </div>
+
+        <div class="method-title">
+            Verify Savings
+        </div>
+
+        <div class="method-text">
+            Compare before and after measurements and record the
+            realized result in the audit layer.
+        </div>
+
+    </div>
+    """)
+
+
+# ============================================================
+# RESULT INTERPRETATION
+# ============================================================
+
+st.html("""
+<div class="validation-section-title">
+    Result Interpretation
+</div>
+
+<div class="validation-section-description">
+    Estimated and realized savings are intentionally kept separate.
+</div>
+""")
+
+
+r1, r2, r3 = st.columns(3)
+
+
+with r1:
+    st.html("""
+    <div class="result-card">
+
+        <div class="result-label">
+            ESTIMATED
+        </div>
+
+        <div class="result-value">
+            Modelled Opportunity
+        </div>
+
+        <div class="result-text">
+            Savings calculated from telemetry, configurable rules
+            and optimization assumptions.
+        </div>
+
+    </div>
+    """)
+
+
+with r2:
+    st.html("""
+    <div class="result-card">
+
+        <div class="result-label">
+            VALIDATED
+        </div>
+
+        <div class="result-value">
+            Evidence Confirmed
+        </div>
+
+        <div class="result-text">
+            A recommendation has been implemented and compared
+            against a measurable before/after baseline.
+        </div>
+
+    </div>
+    """)
+
+
+with r3:
+    st.html("""
+    <div class="result-card">
+
+        <div class="result-label">
+            REALIZED
+        </div>
+
+        <div class="result-value">
+            Actual Savings
+        </div>
+
+        <div class="result-text">
+            Savings supported by post-implementation Snowflake
+            telemetry and recorded in the audit layer.
+        </div>
+
+    </div>
+    """)
+
+
+# ============================================================
+# AUDITABILITY
+# ============================================================
+
+st.html("""
+<div class="validation-section-title">
+    Auditability
+</div>
+
+<div class="validation-section-description">
+    The validation layer is designed to prevent unsupported
+    savings claims.
+</div>
+""")
+
+
+a1, a2 = st.columns(2)
+
+
+with a1:
+
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-title">
+            Evidence First
+        </div>
+
+        <div class="method-text">
+            A recommendation can have an estimated savings value
+            without having a realized savings value. Realized
+            savings require measured post-implementation evidence.
+        </div>
+
+    </div>
+    """)
+
+
+with a2:
+
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-title">
+            No Synthetic Results
+        </div>
+
+        <div class="method-text">
+            The dashboard does not fabricate before/after records
+            when the available Snowflake telemetry does not support
+            them.
+        </div>
+
+    </div>
+    """)
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.html("""
+<div class="validation-note">
+
+    <strong>Current project state:</strong>
+    Recommendations and estimated savings are available from the
+    FinOps engine. Realized savings will appear after an
+    optimization is implemented and new telemetry is collected.
+
+</div>
+""")
+
+st.caption(
+    "Snowflake FinOps Control Center • Optimization validation"
+)
