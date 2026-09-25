@@ -1,0 +1,407 @@
+import streamlit as st
+from snowflake.snowpark.context import get_active_session
+
+
+# ============================================================
+# PAGE CONFIG
+# ============================================================
+
+st.set_page_config(
+    page_title="Snowflake FinOps Control Center",
+    page_icon="❄️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# ============================================================
+# GLOBAL DESIGN SYSTEM
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+
+    /* ========================================================
+       GLOBAL
+       ======================================================== */
+
+    .stApp {
+        background: #F7F9FC;
+    }
+
+    .main .block-container {
+        max-width: 1480px;
+        padding-top: 1.5rem;
+        padding-bottom: 3rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }
+
+    h1, h2, h3, h4 {
+        color: #101828 !important;
+        letter-spacing: -0.025em;
+    }
+
+    p {
+        color: #475467;
+    }
+
+
+    /* ========================================================
+       SIDEBAR
+       ======================================================== */
+
+    [data-testid="stSidebar"] {
+        background: #101828;
+        border-right: 1px solid #1D2939;
+    }
+
+    [data-testid="stSidebar"] * {
+        color: #F9FAFB;
+    }
+
+    [data-testid="stSidebarNav"] {
+        padding-top: 0.35rem;
+    }
+
+    [data-testid="stSidebarNav"] span {
+        font-size: 0.92rem;
+    }
+
+    [data-testid="stSidebar"] hr {
+        border-color: #344054;
+        margin: 1rem 0;
+    }
+
+    [data-testid="stSidebar"] .stCaption {
+        color: #98A2B3 !important;
+    }
+
+
+    /* ========================================================
+       SIDEBAR BRAND
+       ======================================================== */
+
+    .finops-brand {
+        padding: 5px 3px 14px 3px;
+    }
+
+    .finops-brand-title {
+        color: #FFFFFF;
+        font-size: 1.15rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+    }
+
+    .finops-brand-subtitle {
+        color: #98A2B3;
+        font-size: 0.72rem;
+        margin-top: 2px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+    }
+
+
+    /* ========================================================
+       SIDEBAR ENVIRONMENT
+       ======================================================== */
+
+    .environment-card {
+        background: #1D2939;
+        border: 1px solid #344054;
+        border-radius: 12px;
+        padding: 13px 14px;
+        margin-top: 10px;
+    }
+
+    .environment-label {
+        color: #98A2B3;
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .environment-name {
+        color: #FFFFFF;
+        font-size: 0.88rem;
+        font-weight: 650;
+        margin-top: 5px;
+    }
+
+    .environment-db {
+        color: #98A2B3;
+        font-size: 0.70rem;
+        margin-top: 3px;
+    }
+
+
+    /* ========================================================
+       SIDEBAR FOOTER
+       ======================================================== */
+
+    .sidebar-footer {
+        color: #98A2B3;
+        font-size: 0.68rem;
+        line-height: 1.55;
+        margin-top: 18px;
+    }
+
+
+    /* ========================================================
+       KPI CARDS
+       ======================================================== */
+
+    [data-testid="stMetric"] {
+        background: #FFFFFF;
+        border: 1px solid #EAECF0;
+        border-radius: 14px;
+        padding: 18px 20px;
+        min-height: 108px;
+        box-shadow: 0 1px 3px rgba(16, 24, 40, 0.04);
+    }
+
+    [data-testid="stMetricLabel"] {
+        color: #667085 !important;
+        font-size: 0.82rem !important;
+        font-weight: 550 !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: #101828 !important;
+        font-size: 1.75rem !important;
+        font-weight: 750 !important;
+    }
+
+
+    /* ========================================================
+       DATAFRAMES
+       ======================================================== */
+
+    [data-testid="stDataFrame"] {
+        background: #FFFFFF;
+        border: 1px solid #EAECF0;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+
+    /* ========================================================
+       SELECT BOXES
+       ======================================================== */
+
+    div[data-baseweb="select"] > div {
+        background: #FFFFFF;
+        border-color: #D0D5DD;
+        border-radius: 9px;
+    }
+
+
+    /* ========================================================
+       BUTTONS
+       ======================================================== */
+
+    .stButton > button {
+        border-radius: 9px;
+        border: 1px solid #D0D5DD;
+        font-weight: 600;
+        min-height: 40px;
+    }
+
+
+    /* ========================================================
+       ALERTS
+       ======================================================== */
+
+    [data-testid="stAlert"] {
+        border-radius: 11px;
+    }
+
+
+    /* ========================================================
+       SECTION DIVIDER
+       ======================================================== */
+
+    hr {
+        border-color: #EAECF0;
+    }
+
+
+    /* ========================================================
+       CUSTOM PAGE HELPERS
+       ======================================================== */
+
+    .page-kicker {
+        color: #175CD3;
+        font-size: 0.72rem;
+        font-weight: 750;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+
+    .page-title {
+        color: #101828;
+        font-size: 2.15rem;
+        font-weight: 800;
+        letter-spacing: -0.035em;
+        margin: 0;
+    }
+
+    .page-description {
+        color: #667085;
+        font-size: 0.92rem;
+        margin-top: 7px;
+        margin-bottom: 22px;
+    }
+
+    .section-heading {
+        color: #101828;
+        font-size: 1.25rem;
+        font-weight: 750;
+        letter-spacing: -0.015em;
+        margin-top: 25px;
+        margin-bottom: 4px;
+    }
+
+    .section-description {
+        color: #667085;
+        font-size: 0.82rem;
+        margin-bottom: 12px;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# ACTIVE SESSION
+# ============================================================
+
+session = get_active_session()
+
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+# ============================================================
+# SIDEBAR
+# ============================================================
+
+with st.sidebar:
+
+    # --------------------------------------------------------
+    # BRAND
+    # --------------------------------------------------------
+
+    st.markdown(
+        """
+        <div class="finops-brand">
+            <div class="finops-brand-title">❄ SNOWFLAKE</div>
+            <div class="finops-brand-subtitle">
+                FINOPS CONTROL CENTER
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # ENVIRONMENT
+    # --------------------------------------------------------
+
+    st.caption("ENVIRONMENT")
+
+    with st.container(border=True):
+
+        st.markdown(
+            "**Production Analytics**"
+        )
+
+        st.caption("SNOWFLAKE_FINOPS")
+
+    # --------------------------------------------------------
+    # FOOTER
+    # --------------------------------------------------------
+
+    st.markdown(
+        """
+        <div class="sidebar-footer">
+            Cost Optimization Engine<br>
+            Real Snowflake usage telemetry<br>
+            Recommendations • Anomalies • Validation
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ============================================================
+# NAVIGATION
+# ============================================================
+
+overview = st.Page(
+    "app_pages/1_Overview.py",
+    title="Overview",
+    icon=":material/dashboard:",
+)
+
+warehouses = st.Page(
+    "app_pages/2_Warehouses.py",
+    title="Warehouses",
+    icon=":material/warehouse:",
+)
+
+query_analysis = st.Page(
+    "app_pages/3_Query_Analysis.py",
+    title="Query Analysis",
+    icon=":material/search:",
+)
+
+recommendations = st.Page(
+    "app_pages/4_Recommendations.py",
+    title="Recommendations",
+    icon=":material/lightbulb:",
+)
+
+anomalies = st.Page(
+    "app_pages/5_Anomalies.py",
+    title="Anomalies",
+    icon=":material/monitoring:",
+)
+
+validation = st.Page(
+    "app_pages/6_Validation.py",
+    title="Validation",
+    icon=":material/check_circle:",
+)
+
+
+# ============================================================
+# CONTROL CENTER
+# ============================================================
+
+pg = st.navigation(
+    {
+        "CONTROL CENTER": [
+            overview,
+            warehouses,
+            query_analysis,
+            recommendations,
+            anomalies,
+            validation,
+        ]
+    }
+)
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+pg.run()
