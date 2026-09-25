@@ -1,0 +1,718 @@
+import streamlit as st
+import pandas as pd
+from snowflake.snowpark.context import get_active_session
+
+session = get_active_session()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def run_query(sql):
+    return session.sql(sql).to_pandas()
+
+
+def money(value):
+    return f"${float(value):,.2f}"
+
+
+def credits(value):
+    return f"{float(value):,.4f}"
+
+
+def pct(value):
+    return f"{float(value):,.1f}%"
+
+
+# ============================================================
+# PAGE STYLE
+# ============================================================
+
+st.html("""
+<style>
+
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+/* HERO */
+
+.finops-hero {
+    background: linear-gradient(
+        135deg,
+        #101828 0%,
+        #173B7A 48%,
+        #175CD3 100%
+    );
+
+    border-radius: 18px;
+    padding: 34px 36px;
+    margin-bottom: 22px;
+
+    box-shadow:
+        0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+.hero-label {
+    color: #53B1FD;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.hero-title {
+    color: #FFFFFF;
+    font-size: 2.15rem;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    margin-bottom: 8px;
+}
+
+.hero-description {
+    color: #D1E9FF;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    max-width: 900px;
+}
+
+/* KPI */
+
+.kpi-card {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 18px 20px;
+    min-height: 105px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.04);
+}
+
+.kpi-label {
+    color: #667085;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+}
+
+.kpi-value {
+    color: #101828;
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+}
+
+/* SECTION */
+
+.section-title {
+    color: #101828;
+    font-size: 1.25rem;
+    font-weight: 750;
+    margin-top: 28px;
+    margin-bottom: 4px;
+}
+
+.section-description {
+    color: #667085;
+    font-size: 0.82rem;
+    margin-bottom: 14px;
+}
+
+/* CARD */
+
+.content-card {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 20px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.035);
+}
+
+/* SIGNAL */
+
+.signal-row {
+    padding: 13px 0;
+    border-bottom: 1px solid #EAECF0;
+}
+
+.signal-row:last-child {
+    border-bottom: none;
+}
+
+.signal-name {
+    color: #101828;
+    font-size: 0.82rem;
+    font-weight: 650;
+}
+
+.signal-detail {
+    color: #667085;
+    font-size: 0.72rem;
+    margin-top: 3px;
+}
+
+/* STATUS */
+
+.status-card {
+    background: #F8FAFC;
+    border: 1px solid #EAECF0;
+    border-radius: 12px;
+    padding: 14px 16px;
+}
+
+.status-title {
+    color: #101828;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.status-text {
+    color: #667085;
+    font-size: 0.72rem;
+    margin-top: 4px;
+}
+
+</style>
+""")
+
+
+# ============================================================
+# DATA
+# ============================================================
+
+cost_df = run_query("""
+SELECT
+    USAGE_DATE,
+    WAREHOUSE_NAME,
+    TOTAL_CREDITS,
+    COMPUTE_CREDITS,
+    CLOUD_SERVICES_CREDITS,
+    ESTIMATED_COST_USD
+FROM SNOWFLAKE_FINOPS.ANALYTICS.DAILY_WAREHOUSE_COST
+ORDER BY USAGE_DATE
+""")
+
+
+rec_df = run_query("""
+SELECT
+    RECOMMENDATION_ID,
+    RULE_ID,
+    RULE_NAME,
+    OBJECT_TYPE,
+    OBJECT_NAME,
+    RECOMMENDATION,
+    EVIDENCE,
+    ESTIMATED_SAVINGS_USD,
+    CONFIDENCE_SCORE,
+    PRIORITY_SCORE,
+    SEVERITY,
+    RISK_LEVEL,
+    CREATED_AT
+FROM SNOWFLAKE_FINOPS.RECOMMENDATIONS.OPTIMIZATION_RECOMMENDATIONS_CLEAN
+ORDER BY PRIORITY_SCORE DESC
+""")
+
+
+query_df = run_query("""
+SELECT
+    QUERY_ID,
+    WAREHOUSE_NAME,
+    QUERY_TYPE,
+    EXECUTION_STATUS,
+    START_TIME,
+    TOTAL_ELAPSED_TIME,
+    BYTES_SCANNED,
+    PERCENTAGE_SCANNED_FROM_CACHE
+FROM SNOWFLAKE_FINOPS.RAW.QUERY_HISTORY_RAW
+ORDER BY START_TIME DESC
+LIMIT 500
+""")
+
+
+# ============================================================
+# CLEAN DATA
+# ============================================================
+
+if not cost_df.empty:
+
+    cost_df["USAGE_DATE"] = pd.to_datetime(
+        cost_df["USAGE_DATE"]
+    )
+
+    for col in [
+        "TOTAL_CREDITS",
+        "COMPUTE_CREDITS",
+        "CLOUD_SERVICES_CREDITS",
+        "ESTIMATED_COST_USD",
+    ]:
+        cost_df[col] = pd.to_numeric(
+            cost_df[col],
+            errors="coerce"
+        ).fillna(0)
+
+
+if not rec_df.empty:
+
+    for col in [
+        "ESTIMATED_SAVINGS_USD",
+        "CONFIDENCE_SCORE",
+        "PRIORITY_SCORE",
+    ]:
+        rec_df[col] = pd.to_numeric(
+            rec_df[col],
+            errors="coerce"
+        ).fillna(0)
+
+
+if not query_df.empty:
+
+    query_df["START_TIME"] = pd.to_datetime(
+        query_df["START_TIME"],
+        errors="coerce"
+    )
+
+    query_df["TOTAL_ELAPSED_TIME"] = pd.to_numeric(
+        query_df["TOTAL_ELAPSED_TIME"],
+        errors="coerce"
+    ).fillna(0)
+
+    query_df["BYTES_SCANNED"] = pd.to_numeric(
+        query_df["BYTES_SCANNED"],
+        errors="coerce"
+    ).fillna(0)
+
+    query_df["PERCENTAGE_SCANNED_FROM_CACHE"] = pd.to_numeric(
+        query_df["PERCENTAGE_SCANNED_FROM_CACHE"],
+        errors="coerce"
+    ).fillna(0)
+
+
+# ============================================================
+# KPI CALCULATIONS
+# ============================================================
+
+total_credits = (
+    cost_df["TOTAL_CREDITS"].sum()
+    if not cost_df.empty else 0
+)
+
+estimated_cost = (
+    cost_df["ESTIMATED_COST_USD"].sum()
+    if not cost_df.empty else 0
+)
+
+estimated_savings = (
+    rec_df["ESTIMATED_SAVINGS_USD"].sum()
+    if not rec_df.empty else 0
+)
+
+recommendation_count = len(rec_df)
+
+failed_queries = (
+    query_df["EXECUTION_STATUS"]
+    .astype(str)
+    .str.upper()
+    .isin(["FAIL", "FAILED"])
+    .sum()
+    if not query_df.empty else 0
+)
+
+
+# ============================================================
+# HERO
+# ============================================================
+
+st.html("""
+<div class="finops-hero">
+
+    <div class="hero-label">
+        FINOPS CONTROL CENTER
+    </div>
+
+    <div class="hero-title">
+        Snowflake Cost Optimizer
+    </div>
+
+    <div class="hero-description">
+        Monitor Snowflake consumption, identify optimization
+        opportunities, and turn usage telemetry into
+        evidence-backed recommendations.
+    </div>
+
+</div>
+""")
+
+
+# ============================================================
+# KPI ROW
+# ============================================================
+
+c1, c2, c3, c4, c5 = st.columns(5)
+
+with c1:
+    st.html(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">TOTAL CREDITS</div>
+        <div class="kpi-value">{credits(total_credits)}</div>
+    </div>
+    """)
+
+with c2:
+    st.html(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">ESTIMATED COST</div>
+        <div class="kpi-value">{money(estimated_cost)}</div>
+    </div>
+    """)
+
+with c3:
+    st.html(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">EST. MONTHLY SAVINGS</div>
+        <div class="kpi-value">{money(estimated_savings)}</div>
+    </div>
+    """)
+
+with c4:
+    st.html(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">RECOMMENDATIONS</div>
+        <div class="kpi-value">{recommendation_count:,}</div>
+    </div>
+    """)
+
+with c5:
+    st.html(f"""
+    <div class="kpi-card">
+        <div class="kpi-label">FAILED QUERIES</div>
+        <div class="kpi-value">{failed_queries:,}</div>
+    </div>
+    """)
+
+
+# ============================================================
+# COST OVERVIEW
+# ============================================================
+
+st.html("""
+<div class="section-title">
+    Cost Overview
+</div>
+
+<div class="section-description">
+    Snowflake credit consumption across the available telemetry period.
+</div>
+""")
+
+
+if cost_df.empty:
+
+    st.info(
+        "No warehouse cost telemetry is currently available."
+    )
+
+else:
+
+    daily_cost = (
+        cost_df
+        .groupby("USAGE_DATE", as_index=True)
+        .agg(
+            Credits=("TOTAL_CREDITS", "sum"),
+            Compute=("COMPUTE_CREDITS", "sum"),
+        )
+        .sort_index()
+    )
+
+    if len(daily_cost) == 1:
+
+        latest_date = daily_cost.index[0]
+        latest = daily_cost.iloc[0]
+
+        st.html(f"""
+        <div class="content-card">
+
+            <div class="card-heading">
+                Current telemetry snapshot
+            </div>
+
+            <div class="card-description">
+                Available usage for {latest_date.strftime("%d %b %Y")}
+            </div>
+
+        </div>
+        """)
+
+        a, b, c = st.columns(3)
+
+        with a:
+            st.metric(
+                "Credits",
+                credits(latest["Credits"])
+            )
+
+        with b:
+            st.metric(
+                "Compute Credits",
+                credits(latest["Compute"])
+            )
+
+        with c:
+            st.metric(
+                "Estimated Cost",
+                money(estimated_cost)
+            )
+
+    else:
+
+        st.line_chart(
+            daily_cost,
+            height=300,
+            width="stretch"
+        )
+
+
+# ============================================================
+# SECOND ROW
+# ============================================================
+
+left, right = st.columns(2)
+
+
+# ============================================================
+# WAREHOUSE COST PROFILE
+# ============================================================
+
+with left:
+
+    st.html("""
+    <div class="section-title">
+        Warehouse Cost Profile
+    </div>
+
+    <div class="section-description">
+        Credit consumption by warehouse.
+    </div>
+    """)
+
+    warehouse_cost = (
+        cost_df
+        .groupby("WAREHOUSE_NAME")["TOTAL_CREDITS"]
+        .sum()
+        .sort_values(ascending=False)
+        if not cost_df.empty
+        else pd.Series(dtype=float)
+    )
+
+    if warehouse_cost.empty:
+
+        st.info("No warehouse cost data available.")
+
+    else:
+
+        st.bar_chart(
+            warehouse_cost,
+            height=280,
+            width="stretch"
+        )
+
+
+# ============================================================
+# OPTIMIZATION SIGNALS
+# ============================================================
+
+with right:
+
+    st.html("""
+    <div class="section-title">
+        Optimization Signals
+    </div>
+
+    <div class="section-description">
+        Rules currently producing the most optimization opportunities.
+    </div>
+    """)
+
+    if rec_df.empty:
+
+        st.info(
+            "No optimization recommendations available."
+        )
+
+    else:
+
+        signals = (
+            rec_df
+            .groupby("RULE_NAME")
+            .agg(
+                Recommendations=("RECOMMENDATION_ID", "count"),
+                Savings=("ESTIMATED_SAVINGS_USD", "sum")
+            )
+            .sort_values(
+                "Recommendations",
+                ascending=False
+            )
+            .head(5)
+        )
+
+        for rule, row in signals.iterrows():
+
+            st.html(f"""
+            <div class="signal-row">
+
+                <div class="signal-name">
+                    {rule}
+                </div>
+
+                <div class="signal-detail">
+                    {int(row["Recommendations"]):,} recommendations
+                    &nbsp; • &nbsp;
+                    {money(row["Savings"])} estimated savings
+                </div>
+
+            </div>
+            """)
+
+
+# ============================================================
+# TOP RECOMMENDATIONS
+# ============================================================
+
+st.html("""
+<div class="section-title">
+    Top Recommendations
+</div>
+
+<div class="section-description">
+    Highest-priority opportunities identified by the optimization engine.
+</div>
+""")
+
+
+if rec_df.empty:
+
+    st.info(
+        "No recommendations are currently available."
+    )
+
+else:
+
+    top = rec_df.head(8).copy()
+
+    top["ESTIMATED_SAVINGS_USD"] = (
+        top["ESTIMATED_SAVINGS_USD"]
+        .map(money)
+    )
+
+    top["CONFIDENCE_SCORE"] = (
+        top["CONFIDENCE_SCORE"]
+        .map(pct)
+    )
+
+    top["PRIORITY_SCORE"] = (
+        top["PRIORITY_SCORE"]
+        .map(lambda x: f"{float(x):.0f}/100")
+    )
+
+    top = top[
+        [
+            "RULE_NAME",
+            "OBJECT_NAME",
+            "ESTIMATED_SAVINGS_USD",
+            "CONFIDENCE_SCORE",
+            "PRIORITY_SCORE",
+            "SEVERITY",
+            "RISK_LEVEL"
+        ]
+    ]
+
+    top.columns = [
+        "Rule",
+        "Object",
+        "Est. Savings",
+        "Confidence",
+        "Priority",
+        "Severity",
+        "Risk"
+    ]
+
+    st.dataframe(
+        top,
+        width="stretch",
+        hide_index=True
+    )
+
+
+# ============================================================
+# ENGINE STATUS
+# ============================================================
+
+st.html("""
+<div class="section-title">
+    Engine Status
+</div>
+
+<div class="section-description">
+    Current state of the FinOps optimization pipeline.
+</div>
+""")
+
+
+s1, s2, s3, s4 = st.columns(4)
+
+with s1:
+    st.html("""
+    <div class="status-card">
+        <div class="status-title">● Telemetry</div>
+        <div class="status-text">
+            Snowflake usage data connected
+        </div>
+    </div>
+    """)
+
+with s2:
+    st.html("""
+    <div class="status-card">
+        <div class="status-title">● Cost Model</div>
+        <div class="status-text">
+            Warehouse cost model active
+        </div>
+    </div>
+    """)
+
+with s3:
+    st.html("""
+    <div class="status-card">
+        <div class="status-title">● Recommendations</div>
+        <div class="status-text">
+            Optimization engine active
+        </div>
+    </div>
+    """)
+
+with s4:
+    st.html("""
+    <div class="status-card">
+        <div class="status-title">● Validation</div>
+        <div class="status-text">
+            Ready for before/after measurement
+        </div>
+    </div>
+    """)
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.caption(
+    "Snowflake FinOps Control Center • "
+    "Estimated savings are model outputs until verified "
+    "through before/after telemetry."
+)
