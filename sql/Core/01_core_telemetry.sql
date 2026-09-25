@@ -1,0 +1,170 @@
+-- =========================================================
+-- PHASE 2 - CORE TELEMETRY LAYER
+-- =========================================================
+
+USE ROLE ACCOUNTADMIN;
+
+USE WAREHOUSE FINOPS_WH;
+
+USE DATABASE SNOWFLAKE_FINOPS;
+USE SCHEMA CORE;
+
+
+-- =========================================================
+-- 1. CORE QUERY HISTORY
+-- =========================================================
+
+CREATE OR REPLACE TABLE SNOWFLAKE_FINOPS.CORE.QUERY_HISTORY AS
+SELECT
+    QUERY_ID,
+    QUERY_TEXT,
+    QUERY_TYPE,
+
+    DATABASE_NAME,
+    SCHEMA_NAME,
+    WAREHOUSE_NAME,
+    USER_NAME,
+    ROLE_NAME,
+
+    START_TIME,
+    END_TIME,
+    TOTAL_ELAPSED_TIME,
+
+    EXECUTION_STATUS,
+    ERROR_CODE,
+    ERROR_MESSAGE,
+
+    BYTES_SCANNED,
+    ROWS_PRODUCED,
+
+    PARTITIONS_SCANNED,
+    PARTITIONS_TOTAL,
+
+    PERCENTAGE_SCANNED_FROM_CACHE,
+
+    BYTES_SPILLED_TO_LOCAL_STORAGE,
+    BYTES_SPILLED_TO_REMOTE_STORAGE,
+
+    QUEUED_PROVISIONING_TIME,
+    QUEUED_REPAIR_TIME,
+    QUEUED_OVERLOAD_TIME,
+
+    COMPILATION_TIME,
+    EXECUTION_TIME
+
+FROM SNOWFLAKE_FINOPS.RAW.QUERY_HISTORY_RAW;
+
+-- =========================================================
+-- 2. CORE WAREHOUSE METERING
+-- =========================================================
+
+CREATE OR REPLACE TABLE SNOWFLAKE_FINOPS.CORE.WAREHOUSE_METERING AS
+SELECT
+    START_TIME,
+    END_TIME,
+    WAREHOUSE_NAME,
+
+    CREDITS_USED,
+    CREDITS_USED_COMPUTE,
+    CREDITS_USED_CLOUD_SERVICES
+
+FROM SNOWFLAKE_FINOPS.RAW.WAREHOUSE_METERING_RAW;
+
+
+-- =========================================================
+-- 3. CORE WAREHOUSE LOAD
+-- =========================================================
+
+CREATE OR REPLACE TABLE SNOWFLAKE_FINOPS.CORE.WAREHOUSE_LOAD AS
+SELECT
+    START_TIME,
+    END_TIME,
+    WAREHOUSE_NAME,
+
+    AVG_RUNNING,
+    AVG_QUEUED_LOAD,
+    AVG_QUEUED_PROVISIONING,
+    AVG_BLOCKED
+
+FROM SNOWFLAKE_FINOPS.RAW.WAREHOUSE_LOAD_RAW;
+
+
+-- =========================================================
+-- 4. BASIC VALIDATION
+-- =========================================================
+
+SELECT
+    'QUERY_HISTORY' AS TABLE_NAME,
+    COUNT(*) AS ROW_COUNT
+FROM SNOWFLAKE_FINOPS.CORE.QUERY_HISTORY
+
+UNION ALL
+
+SELECT
+    'WAREHOUSE_METERING',
+    COUNT(*)
+FROM SNOWFLAKE_FINOPS.CORE.WAREHOUSE_METERING
+
+UNION ALL
+
+SELECT
+    'WAREHOUSE_LOAD',
+    COUNT(*)
+FROM SNOWFLAKE_FINOPS.CORE.WAREHOUSE_LOAD;
+
+
+-- =========================================================
+-- 5. QUERY HISTORY SAMPLE
+-- =========================================================
+
+SELECT
+    QUERY_ID,
+    WAREHOUSE_NAME,
+    START_TIME,
+    TOTAL_ELAPSED_TIME,
+    BYTES_SCANNED,
+    PARTITIONS_SCANNED,
+    PARTITIONS_TOTAL,
+    PERCENTAGE_SCANNED_FROM_CACHE,
+    BYTES_SPILLED_TO_LOCAL_STORAGE,
+    BYTES_SPILLED_TO_REMOTE_STORAGE,
+    EXECUTION_STATUS
+FROM SNOWFLAKE_FINOPS.CORE.QUERY_HISTORY
+ORDER BY START_TIME DESC
+LIMIT 20;
+
+
+-- =========================================================
+-- 6. WAREHOUSE METERING SAMPLE
+-- =========================================================
+
+SELECT
+    START_TIME,
+    END_TIME,
+    WAREHOUSE_NAME,
+    CREDITS_USED,
+    CREDITS_USED_COMPUTE,
+    CREDITS_USED_CLOUD_SERVICES
+FROM SNOWFLAKE_FINOPS.CORE.WAREHOUSE_METERING
+ORDER BY START_TIME DESC
+LIMIT 20;
+
+
+-- =========================================================
+-- 7. WAREHOUSE LOAD SAMPLE
+-- =========================================================
+
+SELECT
+    START_TIME,
+    END_TIME,
+    WAREHOUSE_NAME,
+    AVG_RUNNING,
+    AVG_QUEUED_LOAD,
+    AVG_QUEUED_PROVISIONING,
+    AVG_BLOCKED
+FROM SNOWFLAKE_FINOPS.CORE.WAREHOUSE_LOAD
+ORDER BY START_TIME DESC
+LIMIT 20;
+
+
+
