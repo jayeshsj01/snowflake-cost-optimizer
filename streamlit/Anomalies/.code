@@ -1,0 +1,861 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from snowflake.snowpark.context import get_active_session
+
+session = get_active_session()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def run_query(sql):
+    return session.sql(sql).to_pandas()
+
+
+def money(value):
+    value = float(value or 0)
+    return f"${value:,.2f}"
+
+
+def credits(value):
+    value = float(value or 0)
+    return f"{value:,.4f}"
+
+
+def percentage(value):
+    value = float(value or 0)
+    return f"{value:.1f}%"
+
+
+# ============================================================
+# PAGE STYLE
+# ============================================================
+
+st.html("""
+<style>
+
+.main .block-container {
+    padding-top: 2rem;
+    padding-bottom: 3rem;
+    max-width: 1400px;
+}
+
+/* HERO */
+
+.anomaly-hero {
+    background: linear-gradient(
+        135deg,
+        #101828 0%,
+        #173B7A 48%,
+        #175CD3 100%
+    );
+
+    border-radius: 18px;
+    padding: 34px 36px;
+    margin-bottom: 22px;
+
+    box-shadow:
+        0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+.anomaly-label {
+    color: #53B1FD;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+}
+
+.anomaly-title {
+    color: #FFFFFF;
+    font-size: 2.15rem;
+    font-weight: 800;
+    letter-spacing: -0.035em;
+    margin-bottom: 8px;
+}
+
+.anomaly-description {
+    color: #D1E9FF;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    max-width: 900px;
+}
+
+
+/* KPI */
+
+.anomaly-kpi {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 18px 20px;
+    min-height: 105px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.04);
+}
+
+.anomaly-kpi-label {
+    color: #667085;
+    font-size: 0.78rem;
+    font-weight: 600;
+    margin-bottom: 7px;
+}
+
+.anomaly-kpi-value {
+    color: #101828;
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+}
+
+
+/* SECTION */
+
+.anomaly-section-title {
+    color: #101828;
+    font-size: 1.25rem;
+    font-weight: 750;
+    margin-top: 28px;
+    margin-bottom: 4px;
+}
+
+.anomaly-section-description {
+    color: #667085;
+    font-size: 0.82rem;
+    margin-bottom: 14px;
+}
+
+
+/* STATUS */
+
+.anomaly-status {
+    border-radius: 12px;
+    padding: 15px 18px;
+    margin: 12px 0 18px 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+}
+
+.status-green {
+    background: #ECFDF3;
+    border: 1px solid #ABEFC6;
+    color: #027A48;
+}
+
+.status-amber {
+    background: #FFFAEB;
+    border: 1px solid #FEDF89;
+    color: #B54708;
+}
+
+.status-red {
+    background: #FEF3F2;
+    border: 1px solid #FECDCA;
+    color: #B42318;
+}
+
+
+/* INSIGHT CARD */
+
+.insight-card {
+    background: #FFFFFF;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 20px;
+
+    box-shadow:
+        0 2px 6px rgba(16, 24, 40, 0.035);
+}
+
+.insight-label {
+    color: #667085;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+}
+
+.insight-value {
+    color: #101828;
+    font-size: 1.2rem;
+    font-weight: 800;
+}
+
+.insight-description {
+    color: #667085;
+    font-size: 0.76rem;
+    line-height: 1.45;
+    margin-top: 5px;
+}
+
+
+/* METHODOLOGY */
+
+.method-card {
+    background: #F8FAFC;
+    border: 1px solid #EAECF0;
+    border-radius: 14px;
+    padding: 20px;
+    margin-top: 12px;
+}
+
+.method-title {
+    color: #101828;
+    font-size: 0.88rem;
+    font-weight: 750;
+    margin-bottom: 5px;
+}
+
+.method-text {
+    color: #667085;
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+</style>
+""")
+
+
+# ============================================================
+# LOAD REAL COST TELEMETRY
+# ============================================================
+
+cost_df = run_query("""
+SELECT
+    USAGE_DATE,
+    WAREHOUSE_NAME,
+    TOTAL_CREDITS,
+    COMPUTE_CREDITS,
+    CLOUD_SERVICES_CREDITS,
+    ESTIMATED_COST_USD
+FROM SNOWFLAKE_FINOPS.ANALYTICS.DAILY_WAREHOUSE_COST
+WHERE USAGE_DATE IS NOT NULL
+ORDER BY USAGE_DATE
+""")
+
+
+# ============================================================
+# DATA PREPARATION
+# ============================================================
+
+if not cost_df.empty:
+
+    cost_df["USAGE_DATE"] = pd.to_datetime(
+        cost_df["USAGE_DATE"]
+    )
+
+    for col in [
+        "TOTAL_CREDITS",
+        "COMPUTE_CREDITS",
+        "CLOUD_SERVICES_CREDITS",
+        "ESTIMATED_COST_USD"
+    ]:
+
+        if col in cost_df.columns:
+            cost_df[col] = pd.to_numeric(
+                cost_df[col],
+                errors="coerce"
+            ).fillna(0)
+
+    cost_df["WAREHOUSE_NAME"] = (
+        cost_df["WAREHOUSE_NAME"]
+        .fillna("CLOUD_SERVICES_ONLY")
+        .astype(str)
+    )
+
+
+# ============================================================
+# BUILD ANOMALY MODEL
+# ============================================================
+
+if not cost_df.empty:
+
+    anomaly_df = (
+        cost_df
+        .groupby(
+            ["USAGE_DATE", "WAREHOUSE_NAME"],
+            as_index=False
+        )
+        .agg(
+            DAILY_CREDITS=("TOTAL_CREDITS", "sum"),
+            DAILY_COST_USD=("ESTIMATED_COST_USD", "sum")
+        )
+    )
+
+    anomaly_df = anomaly_df.sort_values(
+        ["WAREHOUSE_NAME", "USAGE_DATE"]
+    )
+
+    # Rolling baseline:
+    # Previous 7 observations are used to estimate expected behavior.
+    anomaly_df["BASELINE_CREDITS"] = (
+        anomaly_df
+        .groupby("WAREHOUSE_NAME")["DAILY_CREDITS"]
+        .transform(
+            lambda x:
+            x.shift(1).rolling(
+                window=7,
+                min_periods=1
+            ).mean()
+        )
+    )
+
+    anomaly_df["BASELINE_STDDEV"] = (
+        anomaly_df
+        .groupby("WAREHOUSE_NAME")["DAILY_CREDITS"]
+        .transform(
+            lambda x:
+            x.shift(1).rolling(
+                window=7,
+                min_periods=2
+            ).std()
+        )
+    )
+
+    anomaly_df["BASELINE_STDDEV"] = (
+        anomaly_df["BASELINE_STDDEV"]
+        .fillna(0)
+    )
+
+    anomaly_df["DEVIATION_USD"] = (
+        anomaly_df["DAILY_COST_USD"]
+        -
+        (
+            anomaly_df["BASELINE_CREDITS"]
+            * 3.0
+        )
+    )
+
+    anomaly_df["DEVIATION_PCT"] = np.where(
+        anomaly_df["BASELINE_CREDITS"] > 0,
+
+        (
+            (
+                anomaly_df["DAILY_CREDITS"]
+                -
+                anomaly_df["BASELINE_CREDITS"]
+            )
+            /
+            anomaly_df["BASELINE_CREDITS"]
+        )
+        * 100,
+
+        0
+    )
+
+    anomaly_df["Z_SCORE"] = np.where(
+        anomaly_df["BASELINE_STDDEV"] > 0,
+
+        (
+            anomaly_df["DAILY_CREDITS"]
+            -
+            anomaly_df["BASELINE_CREDITS"]
+        )
+        /
+        anomaly_df["BASELINE_STDDEV"],
+
+        0
+    )
+
+    # Require a meaningful baseline.
+    # A single historical point should not automatically
+    # become an anomaly.
+    anomaly_df["BASELINE_DAYS"] = (
+        anomaly_df
+        .groupby("WAREHOUSE_NAME")
+        .cumcount()
+    )
+
+    anomaly_df["IS_ANOMALY"] = (
+        (anomaly_df["BASELINE_DAYS"] >= 2)
+        &
+        (anomaly_df["Z_SCORE"].abs() >= 3)
+    )
+
+
+else:
+
+    anomaly_df = pd.DataFrame()
+
+
+# ============================================================
+# SUMMARY
+# ============================================================
+
+records_analyzed = len(anomaly_df)
+
+anomaly_count = (
+    int(anomaly_df["IS_ANOMALY"].sum())
+    if not anomaly_df.empty
+    else 0
+)
+
+warehouse_count = (
+    int(anomaly_df["WAREHOUSE_NAME"].nunique())
+    if not anomaly_df.empty
+    else 0
+)
+
+largest_deviation = (
+    float(
+        anomaly_df["DEVIATION_PCT"]
+        .abs()
+        .max()
+    )
+    if not anomaly_df.empty
+    else 0
+)
+
+
+# ============================================================
+# HERO
+# ============================================================
+
+st.html("""
+<div class="anomaly-hero">
+
+    <div class="anomaly-label">
+        FINOPS MONITORING
+    </div>
+
+    <div class="anomaly-title">
+        Cost Anomalies
+    </div>
+
+    <div class="anomaly-description">
+        Detect unusual Snowflake consumption by comparing daily
+        warehouse cost against historical workload behavior.
+    </div>
+
+</div>
+""")
+
+
+# ============================================================
+# KPI ROW
+# ============================================================
+
+k1, k2, k3, k4 = st.columns(4)
+
+with k1:
+    st.html(f"""
+    <div class="anomaly-kpi">
+        <div class="anomaly-kpi-label">
+            RECORDS ANALYZED
+        </div>
+        <div class="anomaly-kpi-value">
+            {records_analyzed:,}
+        </div>
+    </div>
+    """)
+
+with k2:
+    st.html(f"""
+    <div class="anomaly-kpi">
+        <div class="anomaly-kpi-label">
+            ANOMALIES DETECTED
+        </div>
+        <div class="anomaly-kpi-value">
+            {anomaly_count:,}
+        </div>
+    </div>
+    """)
+
+with k3:
+    st.html(f"""
+    <div class="anomaly-kpi">
+        <div class="anomaly-kpi-label">
+            WAREHOUSES ANALYZED
+        </div>
+        <div class="anomaly-kpi-value">
+            {warehouse_count:,}
+        </div>
+    </div>
+    """)
+
+with k4:
+    st.html(f"""
+    <div class="anomaly-kpi">
+        <div class="anomaly-kpi-label">
+            LARGEST DEVIATION
+        </div>
+        <div class="anomaly-kpi-value">
+            {percentage(largest_deviation)}
+        </div>
+    </div>
+    """)
+
+
+# ============================================================
+# SYSTEM STATUS
+# ============================================================
+
+if anomaly_count == 0:
+
+    st.html("""
+    <div class="anomaly-status status-green">
+
+        <strong>No statistically significant anomalies detected.</strong>
+        <br>
+
+        Current warehouse cost behavior is within the available
+        historical baseline.
+    </div>
+    """)
+
+elif anomaly_count <= 3:
+
+    st.html(f"""
+    <div class="anomaly-status status-amber">
+
+        <strong>{anomaly_count} potential cost anomaly/anomalies detected.</strong>
+        <br>
+
+        Review the affected warehouse and compare actual usage
+        against its historical baseline before taking action.
+    </div>
+    """)
+
+else:
+
+    st.html(f"""
+    <div class="anomaly-status status-red">
+
+        <strong>{anomaly_count} cost anomalies detected.</strong>
+        <br>
+
+        Multiple deviations from historical warehouse behavior
+        require investigation.
+    </div>
+    """)
+
+
+# ============================================================
+# FILTER
+# ============================================================
+
+st.html("""
+<div class="anomaly-section-title">
+    Investigation
+</div>
+
+<div class="anomaly-section-description">
+    Focus on a warehouse or review the complete cost baseline.
+</div>
+""")
+
+
+if not anomaly_df.empty:
+
+    warehouse_options = ["All"] + sorted(
+        anomaly_df["WAREHOUSE_NAME"]
+        .unique()
+        .tolist()
+    )
+
+    selected_warehouse = st.selectbox(
+        "Warehouse",
+        warehouse_options
+    )
+
+    visible_df = anomaly_df.copy()
+
+    if selected_warehouse != "All":
+
+        visible_df = visible_df[
+            visible_df["WAREHOUSE_NAME"]
+            == selected_warehouse
+        ]
+
+else:
+
+    selected_warehouse = "All"
+    visible_df = anomaly_df.copy()
+
+
+# ============================================================
+# COST TREND
+# ============================================================
+
+st.html("""
+<div class="anomaly-section-title">
+    Cost Baseline
+</div>
+
+<div class="anomaly-section-description">
+    Actual daily credits compared with the rolling historical
+    baseline used by the anomaly detector.
+</div>
+""")
+
+
+if not visible_df.empty:
+
+    chart_df = visible_df[
+        [
+            "USAGE_DATE",
+            "DAILY_CREDITS",
+            "BASELINE_CREDITS"
+        ]
+    ].copy()
+
+    chart_df = chart_df.set_index(
+        "USAGE_DATE"
+    )
+
+    chart_df.columns = [
+        "Actual Credits",
+        "Expected Credits"
+    ]
+
+    st.line_chart(
+        chart_df,
+        width="stretch",
+        height=380
+    )
+
+else:
+
+    st.info(
+        "No cost telemetry is available for the selected warehouse."
+    )
+
+
+# ============================================================
+# ANOMALY EVENTS
+# ============================================================
+
+st.html("""
+<div class="anomaly-section-title">
+    Detected Events
+</div>
+
+<div class="anomaly-section-description">
+    Events exceeding the statistical threshold are surfaced below.
+</div>
+""")
+
+
+if not visible_df.empty:
+
+    events = visible_df[
+        visible_df["IS_ANOMALY"] == True
+    ].copy()
+
+    if events.empty:
+
+        st.info(
+            "No anomaly events were detected in the selected scope."
+        )
+
+    else:
+
+        events["Actual Cost"] = (
+            events["DAILY_COST_USD"]
+            .map(money)
+        )
+
+        events["Expected Credits"] = (
+            events["BASELINE_CREDITS"]
+            .map(credits)
+        )
+
+        events["Actual Credits"] = (
+            events["DAILY_CREDITS"]
+            .map(credits)
+        )
+
+        events["Deviation"] = (
+            events["DEVIATION_PCT"]
+            .map(percentage)
+        )
+
+        events["Z-Score"] = (
+            events["Z_SCORE"]
+            .map(lambda x: f"{x:.2f}")
+        )
+
+        event_display = events[
+            [
+                "USAGE_DATE",
+                "WAREHOUSE_NAME",
+                "Actual Credits",
+                "Expected Credits",
+                "Actual Cost",
+                "Deviation",
+                "Z-Score"
+            ]
+        ].copy()
+
+        event_display.columns = [
+            "Date",
+            "Warehouse",
+            "Actual Credits",
+            "Expected Credits",
+            "Actual Cost",
+            "Deviation",
+            "Z-Score"
+        ]
+
+        st.dataframe(
+            event_display,
+            width="stretch",
+            hide_index=True
+        )
+
+
+# ============================================================
+# LATEST TELEMETRY
+# ============================================================
+
+st.html("""
+<div class="anomaly-section-title">
+    Latest Cost Signals
+</div>
+
+<div class="anomaly-section-description">
+    Most recent warehouse observations available to the engine.
+</div>
+""")
+
+
+if not visible_df.empty:
+
+    latest = (
+        visible_df
+        .sort_values(
+            "USAGE_DATE",
+            ascending=False
+        )
+        .head(10)
+        .copy()
+    )
+
+    latest["Daily Credits"] = (
+        latest["DAILY_CREDITS"]
+        .map(credits)
+    )
+
+    latest["Daily Cost"] = (
+        latest["DAILY_COST_USD"]
+        .map(money)
+    )
+
+    latest["Expected Credits"] = (
+        latest["BASELINE_CREDITS"]
+        .map(credits)
+    )
+
+    latest["Deviation"] = (
+        latest["DEVIATION_PCT"]
+        .map(percentage)
+    )
+
+    latest_display = latest[
+        [
+            "USAGE_DATE",
+            "WAREHOUSE_NAME",
+            "Daily Credits",
+            "Expected Credits",
+            "Daily Cost",
+            "Deviation"
+        ]
+    ].copy()
+
+    latest_display.columns = [
+        "Date",
+        "Warehouse",
+        "Daily Credits",
+        "Expected Credits",
+        "Daily Cost",
+        "Deviation"
+    ]
+
+    st.dataframe(
+        latest_display,
+        width="stretch",
+        hide_index=True
+    )
+
+
+# ============================================================
+# DETECTION METHODOLOGY
+# ============================================================
+
+st.html("""
+<div class="anomaly-section-title">
+    Detection Method
+</div>
+
+<div class="anomaly-section-description">
+    The anomaly engine uses a statistical baseline rather than
+    manually defined cost thresholds.
+</div>
+""")
+
+
+m1, m2, m3 = st.columns(3)
+
+with m1:
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-title">
+            01 · Historical Baseline
+        </div>
+
+        <div class="method-text">
+            Previous warehouse observations are used to estimate
+            expected daily credit consumption.
+        </div>
+
+    </div>
+    """)
+
+with m2:
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-title">
+            02 · Deviation
+        </div>
+
+        <div class="method-text">
+            Actual consumption is compared against the expected
+            baseline to measure the magnitude of the change.
+        </div>
+
+    </div>
+    """)
+
+with m3:
+    st.html("""
+    <div class="method-card">
+
+        <div class="method-title">
+            03 · Statistical Signal
+        </div>
+
+        <div class="method-text">
+            A z-score threshold of ±3 is used to flag unusually
+            large deviations when enough history is available.
+        </div>
+
+    </div>
+    """)
+
+
+# ============================================================
+# IMPORTANT DATA NOTE
+# ============================================================
+
+st.caption(
+    "Anomaly results are based on available Snowflake telemetry. "
+    "Limited history can reduce statistical sensitivity. "
+    "No synthetic cost records are generated."
+)
