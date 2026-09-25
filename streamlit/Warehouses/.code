@@ -1,0 +1,549 @@
+import streamlit as st
+from snowflake.snowpark.context import get_active_session
+
+
+# ============================================================
+# SESSION
+# ============================================================
+
+session = get_active_session()
+
+
+# ============================================================
+# PAGE STYLE
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+        .warehouse-hero {
+            background: linear-gradient(135deg, #101828 0%, #175CD3 100%);
+            border-radius: 18px;
+            padding: 28px 32px;
+            margin-bottom: 24px;
+        }
+
+        .warehouse-kicker {
+            color: #84CAFF;
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+        }
+
+        .warehouse-title {
+            color: #FFFFFF;
+            font-size: 2.15rem;
+            font-weight: 750;
+            margin-top: 6px;
+        }
+
+        .warehouse-subtitle {
+            color: #D1E9FF;
+            font-size: 0.92rem;
+            margin-top: 6px;
+        }
+
+        .section-title {
+            color: #101828;
+            font-size: 1.35rem;
+            font-weight: 700;
+            margin-top: 26px;
+            margin-bottom: 8px;
+        }
+
+        .section-caption {
+            color: #667085;
+            font-size: 0.88rem;
+            margin-bottom: 14px;
+        }
+
+        .signal-card {
+            background: #FFFFFF;
+            border: 1px solid #EAECF0;
+            border-radius: 14px;
+            padding: 18px;
+            margin-bottom: 12px;
+        }
+
+        .signal-title {
+            color: #101828;
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        .signal-value {
+            color: #175CD3;
+            font-size: 1.25rem;
+            font-weight: 750;
+            margin-top: 5px;
+        }
+
+        .signal-text {
+            color: #667085;
+            font-size: 0.82rem;
+            margin-top: 4px;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# HERO
+# ============================================================
+
+st.markdown(
+    """
+    <div class="warehouse-hero">
+        <div class="warehouse-kicker">Workload Intelligence</div>
+        <div class="warehouse-title">Warehouse Explorer</div>
+        <div class="warehouse-subtitle">
+            Understand warehouse cost, workload activity, query behavior,
+            and efficiency signals.
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# LOAD WAREHOUSE COST TELEMETRY
+# ============================================================
+
+cost_df = session.sql(
+    """
+    SELECT
+        USAGE_DATE,
+        WAREHOUSE_NAME,
+        TOTAL_CREDITS,
+        COMPUTE_CREDITS,
+        CLOUD_SERVICES_CREDITS,
+        ESTIMATED_COST_USD
+    FROM SNOWFLAKE_FINOPS.ANALYTICS.DAILY_WAREHOUSE_COST
+    ORDER BY USAGE_DATE
+    """
+).to_pandas()
+
+
+# ============================================================
+# LOAD QUERY TELEMETRY
+# ============================================================
+
+query_df = session.sql(
+    """
+    SELECT
+        WAREHOUSE_NAME,
+        EXECUTION_STATUS,
+        TOTAL_ELAPSED_TIME,
+        QUEUED_PROVISIONING_TIME,
+        QUEUED_OVERLOAD_TIME,
+        PERCENTAGE_SCANNED_FROM_CACHE
+    FROM SNOWFLAKE_FINOPS.RAW.QUERY_HISTORY_RAW
+    WHERE WAREHOUSE_NAME IS NOT NULL
+    """
+).to_pandas()
+
+
+# ============================================================
+# CHECK DATA
+# ============================================================
+
+if cost_df.empty:
+    st.info("No warehouse cost telemetry is currently available.")
+    st.stop()
+
+
+# ============================================================
+# CLEAN COST DATA
+# ============================================================
+
+cost_df["TOTAL_CREDITS"] = cost_df["TOTAL_CREDITS"].fillna(0)
+cost_df["COMPUTE_CREDITS"] = cost_df["COMPUTE_CREDITS"].fillna(0)
+cost_df["CLOUD_SERVICES_CREDITS"] = (
+    cost_df["CLOUD_SERVICES_CREDITS"].fillna(0)
+)
+cost_df["ESTIMATED_COST_USD"] = cost_df["ESTIMATED_COST_USD"].fillna(0)
+
+
+# ============================================================
+# WAREHOUSE COST SUMMARY
+# ============================================================
+
+warehouse_cost = (
+    cost_df
+    .groupby("WAREHOUSE_NAME", dropna=False)
+    .agg(
+        TOTAL_CREDITS=("TOTAL_CREDITS", "sum"),
+        COMPUTE_CREDITS=("COMPUTE_CREDITS", "sum"),
+        CLOUD_SERVICES_CREDITS=("CLOUD_SERVICES_CREDITS", "sum"),
+        ESTIMATED_COST_USD=("ESTIMATED_COST_USD", "sum"),
+        ACTIVE_DAYS=("USAGE_DATE", "nunique"),
+    )
+    .reset_index()
+)
+
+
+# ============================================================
+# QUERY SUMMARY
+# ============================================================
+
+if not query_df.empty:
+
+    query_df["TOTAL_ELAPSED_TIME"] = (
+        query_df["TOTAL_ELAPSED_TIME"].fillna(0)
+    )
+
+    query_df["QUEUED_PROVISIONING_TIME"] = (
+        query_df["QUEUED_PROVISIONING_TIME"].fillna(0)
+    )
+
+    query_df["QUEUED_OVERLOAD_TIME"] = (
+        query_df["QUEUED_OVERLOAD_TIME"].fillna(0)
+    )
+
+    query_df["PERCENTAGE_SCANNED_FROM_CACHE"] = (
+        query_df["PERCENTAGE_SCANNED_FROM_CACHE"].fillna(0)
+    )
+
+    query_summary = (
+        query_df
+        .groupby("WAREHOUSE_NAME")
+        .agg(
+            QUERY_COUNT=("WAREHOUSE_NAME", "count"),
+            FAILED_QUERIES=(
+                "EXECUTION_STATUS",
+                lambda x: (x == "FAIL").sum(),
+            ),
+            AVG_RUNTIME_MS=("TOTAL_ELAPSED_TIME", "mean"),
+            AVG_QUEUE_MS=("QUEUED_PROVISIONING_TIME", "mean"),
+            AVG_OVERLOAD_QUEUE_MS=("QUEUED_OVERLOAD_TIME", "mean"),
+            AVG_CACHE_PCT=("PERCENTAGE_SCANNED_FROM_CACHE", "mean"),
+        )
+        .reset_index()
+    )
+
+else:
+
+    query_summary = None
+
+
+# ============================================================
+# MERGE COST + QUERY DATA
+# ============================================================
+
+if query_summary is not None:
+
+    warehouse_summary = warehouse_cost.merge(
+        query_summary,
+        on="WAREHOUSE_NAME",
+        how="left",
+    )
+
+else:
+
+    warehouse_summary = warehouse_cost.copy()
+
+    warehouse_summary["QUERY_COUNT"] = 0
+    warehouse_summary["FAILED_QUERIES"] = 0
+    warehouse_summary["AVG_RUNTIME_MS"] = 0
+    warehouse_summary["AVG_QUEUE_MS"] = 0
+    warehouse_summary["AVG_OVERLOAD_QUEUE_MS"] = 0
+    warehouse_summary["AVG_CACHE_PCT"] = 0
+
+
+# ============================================================
+# FILL MISSING QUERY VALUES
+# ============================================================
+
+numeric_query_columns = [
+    "QUERY_COUNT",
+    "FAILED_QUERIES",
+    "AVG_RUNTIME_MS",
+    "AVG_QUEUE_MS",
+    "AVG_OVERLOAD_QUEUE_MS",
+    "AVG_CACHE_PCT",
+]
+
+for column in numeric_query_columns:
+    warehouse_summary[column] = (
+        warehouse_summary[column].fillna(0)
+    )
+
+
+# ============================================================
+# WAREHOUSE SELECTOR
+# ============================================================
+
+warehouse_options = (
+    warehouse_summary["WAREHOUSE_NAME"]
+    .dropna()
+    .astype(str)
+    .unique()
+    .tolist()
+)
+
+warehouse_options.sort()
+
+if not warehouse_options:
+    st.warning(
+        "No named warehouses are available in the current telemetry."
+    )
+    st.stop()
+
+
+selected_warehouse = st.selectbox(
+    "Select warehouse",
+    warehouse_options,
+)
+
+
+selected_rows = warehouse_summary[
+    warehouse_summary["WAREHOUSE_NAME"].astype(str)
+    == selected_warehouse
+]
+
+if selected_rows.empty:
+    st.warning("No metrics are available for this warehouse.")
+    st.stop()
+
+selected = selected_rows.iloc[0]
+
+
+# ============================================================
+# KPI ROW
+# ============================================================
+
+k1, k2, k3, k4, k5 = st.columns(5)
+
+
+with k1:
+
+    st.metric(
+        "Credits",
+        f"{float(selected['TOTAL_CREDITS']):.4f}",
+    )
+
+
+with k2:
+
+    st.metric(
+        "Estimated Cost",
+        f"${float(selected['ESTIMATED_COST_USD']):,.2f}",
+    )
+
+
+with k3:
+
+    st.metric(
+        "Queries",
+        f"{int(selected['QUERY_COUNT']):,}",
+    )
+
+
+with k4:
+
+    st.metric(
+        "Failed Queries",
+        f"{int(selected['FAILED_QUERIES']):,}",
+    )
+
+
+with k5:
+
+    st.metric(
+        "Avg Cache",
+        f"{float(selected['AVG_CACHE_PCT']):.1f}%",
+    )
+
+
+# ============================================================
+# COST PROFILE
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">Warehouse Cost Profile</div>',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    '<div class="section-caption">'
+    'Credit consumption across the available warehouse telemetry.'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+
+cost_chart = (
+    warehouse_summary
+    .set_index("WAREHOUSE_NAME")[
+        [
+            "COMPUTE_CREDITS",
+            "CLOUD_SERVICES_CREDITS",
+        ]
+    ]
+)
+
+st.bar_chart(
+    cost_chart,
+    height=330,
+    width="stretch",
+)
+
+
+# ============================================================
+# PERFORMANCE TABLE
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">Workload Performance</div>',
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    '<div class="section-caption">'
+    'Query activity and runtime indicators by warehouse.'
+    '</div>',
+    unsafe_allow_html=True,
+)
+
+
+performance = warehouse_summary[
+    [
+        "WAREHOUSE_NAME",
+        "TOTAL_CREDITS",
+        "QUERY_COUNT",
+        "AVG_RUNTIME_MS",
+        "AVG_QUEUE_MS",
+        "AVG_OVERLOAD_QUEUE_MS",
+        "AVG_CACHE_PCT",
+        "FAILED_QUERIES",
+    ]
+].copy()
+
+
+performance.columns = [
+    "Warehouse",
+    "Credits",
+    "Queries",
+    "Avg Runtime (ms)",
+    "Avg Provisioning Queue (ms)",
+    "Avg Overload Queue (ms)",
+    "Avg Cache %",
+    "Failed Queries",
+]
+
+
+performance["Credits"] = performance["Credits"].round(4)
+
+performance["Avg Runtime (ms)"] = (
+    performance["Avg Runtime (ms)"].round(1)
+)
+
+performance["Avg Provisioning Queue (ms)"] = (
+    performance["Avg Provisioning Queue (ms)"].round(1)
+)
+
+performance["Avg Overload Queue (ms)"] = (
+    performance["Avg Overload Queue (ms)"].round(1)
+)
+
+performance["Avg Cache %"] = (
+    performance["Avg Cache %"].round(1)
+)
+
+
+st.dataframe(
+    performance,
+    hide_index=True,
+    width="stretch",
+)
+
+
+# ============================================================
+# SELECTED WAREHOUSE DETAILS
+# ============================================================
+
+st.markdown(
+    '<div class="section-title">Selected Warehouse Signals</div>',
+    unsafe_allow_html=True,
+)
+
+
+left, right = st.columns(2)
+
+
+with left:
+
+    runtime = float(selected["AVG_RUNTIME_MS"])
+    queue = float(selected["AVG_QUEUE_MS"])
+
+    st.markdown(
+        f"""
+        <div class="signal-card">
+            <div class="signal-title">Average Runtime</div>
+            <div class="signal-value">
+                {runtime:,.1f} ms
+            </div>
+            <div class="signal-text">
+                Average elapsed time across observed queries.
+            </div>
+        </div>
+
+        <div class="signal-card">
+            <div class="signal-title">Provisioning Queue</div>
+            <div class="signal-value">
+                {queue:,.1f} ms
+            </div>
+            <div class="signal-text">
+                Average time spent waiting for warehouse provisioning.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+with right:
+
+    cache = float(selected["AVG_CACHE_PCT"])
+    failed = int(selected["FAILED_QUERIES"])
+
+    st.markdown(
+        f"""
+        <div class="signal-card">
+            <div class="signal-title">Cache Behavior</div>
+            <div class="signal-value">
+                {cache:.1f}%
+            </div>
+            <div class="signal-text">
+                Average percentage of scanned data served from cache.
+            </div>
+        </div>
+
+        <div class="signal-card">
+            <div class="signal-title">Query Failures</div>
+            <div class="signal-value">
+                {failed:,}
+            </div>
+            <div class="signal-text">
+                Failed queries observed for this warehouse.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# IMPORTANT TELEMETRY NOTE
+# ============================================================
+
+st.info(
+    "Idle compute is not fabricated on this page. "
+    "The current DAILY_WAREHOUSE_COST table does not contain "
+    "query-attributed compute or idle-credit columns, so those "
+    "metrics are not displayed as if they were available."
+)
